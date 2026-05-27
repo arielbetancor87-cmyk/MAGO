@@ -278,26 +278,26 @@ export default function App() {
   const total      = cart.reduce((s,i)=>s+i.price*i.qty,0);
   const totalItems = cart.reduce((s,i)=>s+i.qty,0);
 
-  // ── Convert image to base64 (no Storage needed) ─────────────────────────
-  const uploadImage = (file) => new Promise((resolve, reject) => {
-    // Resize to max 600px to keep Firestore document small
+  // ── Convert image to small base64 ────────────────────────────────────────
+  const uploadImage = (file) => new Promise((resolve) => {
     const reader = new FileReader();
     reader.onload = (e) => {
       const img = new Image();
       img.onload = () => {
         const canvas = document.createElement("canvas");
-        const MAX = 600;
+        // Max 300px, quality 0.5 → keeps it well under 100KB
+        const MAX = 300;
         let w = img.width, h = img.height;
-        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
-        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+        if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
+        else        { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.75));
+        resolve(canvas.toDataURL("image/jpeg", 0.5));
       };
-      img.onerror = reject;
+      img.onerror = () => resolve(""); // fallback: no image
       img.src = e.target.result;
     };
-    reader.onerror = reject;
+    reader.onerror = () => resolve("");
     reader.readAsDataURL(file);
   });
 
