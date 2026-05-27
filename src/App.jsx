@@ -60,28 +60,54 @@ function ConfirmDialog({ msg, onConfirm, onCancel }) {
 // ── Product Modal ──────────────────────────────────────────────────────────
 function ProductModal({ product, onClose, onSave, saving }) {
   const isEdit = !!product?.id;
-  const [name,      setName]      = useState(product?.name    || "");
-  const [price,     setPrice]     = useState(product?.price   || "");
-  const [imgUrl,    setImgUrl]    = useState(product?.img_url || "");
-  const [imgFile,   setImgFile]   = useState(null);
-  const [imgPreview,setImgPreview]= useState(product?.img_url || "");
-  const [err,       setErr]       = useState("");
+  const [name,       setName]       = useState(product?.name    || "");
+  const [price,      setPrice]      = useState(product?.price   || "");
+  const [imgUrl,     setImgUrl]     = useState(product?.img_url || "");
+  const [imgPreview, setImgPreview] = useState(product?.img_url || "");
+  const [imgB64,     setImgB64]     = useState(null); // already processed
+  const [processing, setProcessing] = useState(false);
+  const [err,        setErr]        = useState("");
   const fileRef = useRef();
 
+  // Process image immediately on file pick — so save is instant
   const handleFile = (e) => {
     const file = e.target.files[0];
     if (!file) return;
-    setImgFile(file);
-    setImgUrl("");
     setImgPreview(URL.createObjectURL(file));
+    setImgUrl("");
+    setImgB64(null);
+    setProcessing(true);
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 200;
+        let w = img.width, h = img.height;
+        if (w > h) { if (w > MAX) { h = Math.round(h*MAX/w); w = MAX; } }
+        else        { if (h > MAX) { w = Math.round(w*MAX/h); h = MAX; } }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img,0,0,w,h);
+        const b64 = canvas.toDataURL("image/jpeg",0.4);
+        setImgB64(b64.length < 500000 ? b64 : null);
+        setProcessing(false);
+      };
+      img.onerror = () => setProcessing(false);
+      img.src = ev.target.result;
+    };
+    reader.onerror = () => setProcessing(false);
+    reader.readAsDataURL(file);
   };
 
   const submit = () => {
     if (!name.trim()) return setErr("El nombre es requerido.");
     const p = parseFloat(price);
     if (!price || isNaN(p) || p <= 0) return setErr("Precio inválido.");
+    if (processing) return setErr("Esperá que termine de procesar la foto.");
     setErr("");
-    onSave({ name:name.trim(), price:p, img_url:imgUrl.trim()||"", imgFile, id:product?.id });
+    // Pass already-processed b64 or URL — no async work in save
+    const finalImg = imgB64 || imgUrl.trim() || "";
+    onSave({ name:name.trim(), price:p, img_url:finalImg, id:product?.id });
   };
 
   const inp = { width:"100%",background:C.surface2,border:`1.5px solid ${C.border}`,borderRadius:8,color:C.text,padding:"11px 14px",fontSize:15,outline:"none",fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box",transition:"border-color 0.2s" };
@@ -136,9 +162,9 @@ function ProductModal({ product, onClose, onSave, saving }) {
 
         {err && <p style={{color:C.red,fontSize:13,marginBottom:12}}>{err}</p>}
 
-        <button onClick={submit} disabled={saving} style={{width:"100%",background:saving?C.purpleXL:C.purple,color:"#fff",border:"none",borderRadius:10,padding:"13px 0",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:17,letterSpacing:2,cursor:saving?"wait":"pointer",boxShadow:`0 4px 14px ${C.purple}55`,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
-          {saving && <Spinner size={18} color="#fff" />}
-          {saving ? "GUARDANDO..." : isEdit ? "GUARDAR CAMBIOS" : "AGREGAR PRODUCTO"}
+        <button onClick={submit} disabled={saving||processing} style={{width:"100%",background:(saving||processing)?C.purpleXL:C.purple,color:"#fff",border:"none",borderRadius:10,padding:"13px 0",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:17,letterSpacing:2,cursor:(saving||processing)?"wait":"pointer",boxShadow:`0 4px 14px ${C.purple}55`,display:"flex",alignItems:"center",justifyContent:"center",gap:10}}>
+          {(saving||processing) && <Spinner size={18} color="#fff" />}
+          {processing ? "PROCESANDO FOTO..." : saving ? "GUARDANDO..." : isEdit ? "GUARDAR CAMBIOS" : "AGREGAR PRODUCTO"}
         </button>
       </div>
     </div>
@@ -324,10 +350,10 @@ export default function App() {
 
       const data = { name:p.name, price:p.price, img_url:finalUrl };
       if (p.id) {
-        await updateDoc(doc(db,"products",p.id), data);
+        await withTimeout(updateDoc(doc(db,"products",p.id), data));
         showToast(`"${p.name}" actualizado`);
       } else {
-        await addDoc(collection(db,"products"),{...data, created_at:Timestamp.now()});
+        await withTimeout(addDoc(collection(db,"products"),{...data, created_at:Timestamp.now()}));
         showToast(`"${p.name}" agregado`);
       }
       await loadProducts();
@@ -352,24 +378,29 @@ export default function App() {
   };
 
   // ── Save sale ─────────────────────────────────────────────────────────────
+  const withTimeout = (promise, ms=10000) =>
+    Promise.race([promise, new Promise((_,rej)=>setTimeout(()=>rej(new Error("Timeout: sin respuesta de Firebase")),ms))]);
+
   const confirmSale = async(payInfo)=>{
     if(!cart.length||saving) return;
     setSaving(true);
     try {
       const today = todayStr();
-      await addDoc(collection(db,"sales"),{
+      await withTimeout(addDoc(collection(db,"sales"),{
         total, date:today,
         method:payInfo.method, cash_paid:payInfo.cash_paid,
         mp_paid:payInfo.mp_paid, change_amount:payInfo.change_amount,
         items:cart.map(i=>({product_id:i.id,product_name:i.name,product_price:i.price,qty:i.qty})),
         created_at:Timestamp.now()
-      });
+      }));
       setCart([]); setPayModal(false);
       showToast("✓ Venta registrada");
       if(isMobile) setMobileView("products");
       if(salesDate===today) loadSales(salesDate);
-    } catch(e){ console.error(e); showToast("Error al guardar la venta",true); }
-    finally   { setSaving(false); }
+    } catch(e){
+      console.error("confirmSale error:", e);
+      showToast("Error: "+e.message, true);
+    } finally { setSaving(false); }
   };
 
   // ── Stats ──────────────────────────────────────────────────────────────────
