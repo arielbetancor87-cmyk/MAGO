@@ -1,0 +1,491 @@
+import { useState, useEffect, useRef, useCallback } from "react";
+import {
+  collection, addDoc, updateDoc, deleteDoc,
+  doc, getDocs, query, where, orderBy, Timestamp
+} from "firebase/firestore";
+import { db } from "./lib/firebase.js";
+
+const PLACEHOLDER = "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=300&q=80";
+const fmt = (n) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0);
+
+const C = {
+  bg:"#f5f4f9", surface:"#ffffff", surface2:"#faf9ff",
+  border:"#e5e1f0", border2:"#d4cee8",
+  purple:"#6d28d9", purpleL:"#7c3aed", purpleXL:"#a78bfa",
+  purpleBg:"#ede9fe", purpleHover:"#5b21b6",
+  text:"#1e1433", text2:"#5b5370", text3:"#9490a5",
+  green:"#059669", greenBg:"#d1fae5",
+  blue:"#2563eb",  blueBg:"#dbeafe",
+  amber:"#d97706", amberBg:"#fef3c7",
+  red:"#dc2626",   redBg:"#fee2e2",
+  shadow:"0 1px 4px #6d28d920", shadowM:"0 4px 20px #6d28d925",
+};
+
+// ── Toast ──────────────────────────────────────────────────────────────────
+function Toast({ msg, visible, isError }) {
+  return (
+    <div style={{position:"fixed",bottom:28,left:"50%",transform:`translateX(-50%) translateY(${visible?0:14}px)`,opacity:visible?1:0,transition:"all 0.22s ease",background:isError?C.red:C.purple,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:15,letterSpacing:1,padding:"10px 24px",borderRadius:10,pointerEvents:"none",zIndex:9999,whiteSpace:"nowrap",boxShadow:"0 6px 28px #6d28d955"}}>
+      {msg}
+    </div>
+  );
+}
+
+// ── Confirm Dialog ─────────────────────────────────────────────────────────
+function ConfirmDialog({ msg, onConfirm, onCancel }) {
+  return (
+    <div style={{position:"fixed",inset:0,background:"#6d28d922",backdropFilter:"blur(3px)",zIndex:2000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:16,padding:28,maxWidth:340,width:"100%",textAlign:"center",boxShadow:C.shadowM}}>
+        <div style={{fontSize:32,marginBottom:10}}>🗑️</div>
+        <p style={{color:C.text,fontFamily:"'DM Sans',sans-serif",fontSize:15,marginBottom:24,lineHeight:1.5}}>{msg}</p>
+        <div style={{display:"flex",gap:10}}>
+          <button onClick={onCancel} style={{flex:1,padding:"10px 0",background:C.surface2,border:`1px solid ${C.border}`,borderRadius:8,color:C.text2,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:15,letterSpacing:1,cursor:"pointer"}}>CANCELAR</button>
+          <button onClick={onConfirm} style={{flex:1,padding:"10px 0",background:C.red,border:"none",borderRadius:8,color:"#fff",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:15,letterSpacing:1,cursor:"pointer"}}>ELIMINAR</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Product Modal ──────────────────────────────────────────────────────────
+function ProductModal({ product, onClose, onSave, saving }) {
+  const isEdit = !!product?.id;
+  const [name,  setName]  = useState(product?.name     || "");
+  const [price, setPrice] = useState(product?.price    || "");
+  const [img,   setImg]   = useState(product?.img_url  || "");
+  const [err,   setErr]   = useState("");
+
+  const submit = () => {
+    if (!name.trim()) return setErr("El nombre es requerido.");
+    const p = parseFloat(price);
+    if (!price || isNaN(p) || p <= 0) return setErr("Ingresá un precio válido.");
+    setErr("");
+    onSave({ name:name.trim(), price:p, img_url:img.trim()||PLACEHOLDER, id:product?.id });
+  };
+
+  const inp = { width:"100%", background:C.surface2, border:`1.5px solid ${C.border}`, borderRadius:8, color:C.text, padding:"11px 14px", fontSize:15, outline:"none", fontFamily:"'DM Sans',sans-serif", boxSizing:"border-box", transition:"border-color 0.2s" };
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#6d28d920",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,padding:30,width:"100%",maxWidth:420,position:"relative",boxShadow:C.shadowM}} onClick={e=>e.stopPropagation()}>
+        <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:C.purpleBg,border:"none",color:C.purpleL,fontSize:18,width:30,height:30,borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",color:C.purple,fontSize:22,fontWeight:900,letterSpacing:2,marginBottom:22,marginTop:0}}>{isEdit?"✏️ EDITAR PRODUCTO":"➕ NUEVO PRODUCTO"}</h2>
+        {[
+          {label:"Nombre *",   val:name,  set:setName,  ph:"Ej: Coca Cola 500ml", type:"text"},
+          {label:"Precio *",   val:price, set:setPrice, ph:"Ej: 1500",             type:"number"},
+          {label:"URL imagen (opcional)", val:img, set:setImg, ph:"https://...",   type:"text"},
+        ].map(({label,val,set,ph,type})=>(
+          <div key={label} style={{marginBottom:16}}>
+            <label style={{display:"block",fontFamily:"'Barlow Condensed',sans-serif",color:C.text2,fontSize:12,letterSpacing:1,marginBottom:6,textTransform:"uppercase"}}>{label}</label>
+            <input type={type} value={val} onChange={e=>set(e.target.value)} placeholder={ph} min={type==="number"?0:undefined} style={inp}
+              onFocus={e=>e.target.style.borderColor=C.purple} onBlur={e=>e.target.style.borderColor=C.border} />
+          </div>
+        ))}
+        {err && <p style={{color:C.red,fontSize:13,marginTop:-8,marginBottom:12}}>{err}</p>}
+        <button onClick={submit} disabled={saving} style={{width:"100%",background:saving?C.purpleXL:C.purple,color:"#fff",border:"none",borderRadius:10,padding:"13px 0",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:17,letterSpacing:2,cursor:saving?"wait":"pointer",transition:"background 0.15s",marginTop:4,boxShadow:`0 4px 14px ${C.purple}55`}}>
+          {saving?"GUARDANDO...":(isEdit?"GUARDAR CAMBIOS":"AGREGAR PRODUCTO")}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Payment Modal ──────────────────────────────────────────────────────────
+function PaymentModal({ total, onClose, onConfirm, saving }) {
+  const [mode,       setMode]       = useState("efectivo");
+  const [cashAmount, setCashAmount] = useState("");
+  const [mpAmount,   setMpAmount]   = useState("");
+
+  const cash = parseFloat(cashAmount)||0;
+  const mp   = parseFloat(mpAmount)||0;
+  const change = mode==="efectivo" ? Math.max(0,cash-total) : mode==="mixto" ? Math.max(0,cash-(total-mp)) : 0;
+  const isValid = mode==="efectivo" ? cash>=total : mode==="transferencia" ? true : (mp+cash)>=total;
+
+  const handleConfirm = () => {
+    if (!isValid||saving) return;
+    onConfirm({ method:mode, cash_paid:mode==="efectivo"||mode==="mixto"?cash:0, mp_paid:mode==="transferencia"?total:mode==="mixto"?mp:0, change_amount:change });
+  };
+
+  const inp = { width:"100%", background:C.surface2, border:`1.5px solid ${C.border}`, borderRadius:8, color:C.text, padding:"12px 14px", fontSize:20, outline:"none", fontFamily:"'DM Mono',monospace", boxSizing:"border-box", transition:"border-color 0.2s" };
+  const mBtn = (key,emoji,label) => (
+    <button onClick={()=>setMode(key)} style={{flex:1,padding:"11px 4px",borderRadius:10,background:mode===key?C.purple:C.surface2,color:mode===key?"#fff":C.text2,border:`1.5px solid ${mode===key?C.purple:C.border}`,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:13,letterSpacing:1,cursor:"pointer",transition:"all 0.15s",boxShadow:mode===key?`0 3px 12px ${C.purple}44`:"none"}}>{emoji} {label}</button>
+  );
+
+  return (
+    <div style={{position:"fixed",inset:0,background:"#6d28d922",backdropFilter:"blur(4px)",zIndex:1000,display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+      <div style={{background:C.surface,border:`1px solid ${C.border}`,borderRadius:18,padding:28,width:"100%",maxWidth:460,position:"relative",boxShadow:C.shadowM}} onClick={e=>e.stopPropagation()}>
+        <button onClick={onClose} style={{position:"absolute",top:16,right:16,background:C.purpleBg,border:"none",color:C.purpleL,fontSize:18,width:30,height:30,borderRadius:8,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center"}}>✕</button>
+        <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",color:C.purple,fontSize:24,fontWeight:900,letterSpacing:2,marginBottom:4,marginTop:0}}>COBRAR VENTA</h2>
+        <div style={{fontFamily:"'DM Mono',monospace",fontSize:32,color:C.text,marginBottom:20,fontWeight:700}}>{fmt(total)}</div>
+
+        <div style={{display:"flex",gap:8,marginBottom:22}}>
+          {mBtn("efectivo","💵","EFECTIVO")}
+          {mBtn("transferencia","📲","TRANSFER")}
+          {mBtn("mixto","🔀","MIXTO")}
+        </div>
+
+        {(mode==="efectivo"||mode==="mixto") && (
+          <div style={{marginBottom:14}}>
+            <label style={{display:"block",fontFamily:"'Barlow Condensed',sans-serif",color:C.text2,fontSize:12,letterSpacing:1,marginBottom:6}}>{mode==="mixto"?"MONTO EN EFECTIVO":"MONTO RECIBIDO"}</label>
+            <input type="number" value={cashAmount} onChange={e=>setCashAmount(e.target.value)} placeholder="0" style={inp} autoFocus
+              onFocus={e=>e.target.style.borderColor=C.green} onBlur={e=>e.target.style.borderColor=C.border} />
+          </div>
+        )}
+
+        {(mode==="transferencia"||mode==="mixto") && (
+          <div style={{marginBottom:14}}>
+            <label style={{display:"block",fontFamily:"'Barlow Condensed',sans-serif",color:C.text2,fontSize:12,letterSpacing:1,marginBottom:6}}>MONTO MERCADO PAGO / TRANSFER</label>
+            {mode==="transferencia"
+              ? <div style={{padding:"12px 14px",background:C.blueBg,border:`1.5px solid ${C.blue}44`,borderRadius:8,fontFamily:"'DM Mono',monospace",color:C.blue,fontSize:20}}>{fmt(total)}</div>
+              : <input type="number" value={mpAmount} onChange={e=>setMpAmount(e.target.value)} placeholder="0" style={inp}
+                  onFocus={e=>e.target.style.borderColor=C.blue} onBlur={e=>e.target.style.borderColor=C.border} />
+            }
+          </div>
+        )}
+
+        {mode==="mixto"&&mp>0 && (
+          <div style={{background:C.purpleBg,borderRadius:10,padding:"10px 16px",marginBottom:14,border:`1px solid ${C.border}`}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:C.text2,marginBottom:4}}>EFECTIVO REQUERIDO</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:C.purple}}>{fmt(Math.max(0,total-mp))}</div>
+          </div>
+        )}
+
+        {(mode==="efectivo"||mode==="mixto")&&cash>0 && (
+          <div style={{background:change>0?C.greenBg:C.redBg,border:`1.5px solid ${change>0?C.green:C.red}44`,borderRadius:10,padding:"12px 16px",marginBottom:16}}>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:C.text2,marginBottom:4}}>VUELTO</div>
+            <div style={{fontFamily:"'DM Mono',monospace",fontSize:30,fontWeight:700,color:change>0?C.green:C.red}}>{fmt(change)}</div>
+            {change<0&&<div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,color:C.red,marginTop:4}}>MONTO INSUFICIENTE</div>}
+          </div>
+        )}
+
+        <button onClick={handleConfirm} disabled={!isValid||saving} style={{width:"100%",background:isValid&&!saving?C.purple:C.border,color:isValid&&!saving?"#fff":C.text3,border:"none",borderRadius:10,padding:"14px 0",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,letterSpacing:2,cursor:isValid&&!saving?"pointer":"not-allowed",transition:"background 0.2s",boxShadow:isValid?`0 4px 18px ${C.purple}55`:"none"}}>
+          {saving?"GUARDANDO...":"REGISTRAR VENTA"}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── Main App ───────────────────────────────────────────────────────────────
+export default function App() {
+  const [tab,           setTab]           = useState("caja");
+  const [products,      setProducts]      = useState([]);
+  const [cart,          setCart]          = useState([]);
+  const [sales,         setSales]         = useState([]);
+  const [salesDate,     setSalesDate]     = useState(() => new Date().toISOString().split("T")[0]);
+  const [loading,       setLoading]       = useState(true);
+  const [saving,        setSaving]        = useState(false);
+  const [toast,         setToast]         = useState({msg:"",visible:false,isError:false});
+  const [productModal,  setProductModal]  = useState(null);
+  const [payModal,      setPayModal]      = useState(false);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [pressedId,     setPressedId]     = useState(null);
+  const toastRef = useRef(null);
+  const [isMobile,   setIsMobile]   = useState(window.innerWidth < 768);
+  const [mobileView, setMobileView] = useState("products");
+
+  useEffect(()=>{
+    const h=()=>setIsMobile(window.innerWidth<768);
+    window.addEventListener("resize",h); return()=>window.removeEventListener("resize",h);
+  },[]);
+
+  const showToast = (msg, isError=false) => {
+    if (toastRef.current) clearTimeout(toastRef.current);
+    setToast({msg,visible:true,isError});
+    toastRef.current = setTimeout(()=>setToast(t=>({...t,visible:false})),2400);
+  };
+
+  // ── Load products ────────────────────────────────────────────────────────
+  const loadProducts = useCallback(async () => {
+    try {
+      const snap = await getDocs(query(collection(db,"products"), orderBy("created_at","asc")));
+      setProducts(snap.docs.map(d=>({id:d.id,...d.data()})));
+    } catch(e) { showToast("Error cargando productos",true); }
+  },[]);
+
+  // ── Load sales for date ──────────────────────────────────────────────────
+  const loadSales = useCallback(async (date) => {
+    try {
+      const start = Timestamp.fromDate(new Date(`${date}T00:00:00`));
+      const end   = Timestamp.fromDate(new Date(`${date}T23:59:59`));
+      const snap  = await getDocs(query(
+        collection(db,"sales"),
+        where("created_at",">=",start),
+        where("created_at","<=",end),
+        orderBy("created_at","desc")
+      ));
+      setSales(snap.docs.map(d=>({id:d.id,...d.data()})));
+    } catch(e) { showToast("Error cargando ventas",true); }
+  },[]);
+
+  useEffect(()=>{ Promise.all([loadProducts(),loadSales(salesDate)]).finally(()=>setLoading(false)); },[]);
+  useEffect(()=>{ loadSales(salesDate); },[salesDate]);
+
+  // ── Cart ─────────────────────────────────────────────────────────────────
+  const addToCart  = (p) => { setCart(prev=>{ const f=prev.find(i=>i.id===p.id); return f?prev.map(i=>i.id===p.id?{...i,qty:i.qty+1}:i):[...prev,{...p,qty:1}]; }); showToast(`${p.name} agregado`); };
+  const changeQty  = (id,d) => setCart(prev=>prev.map(i=>i.id===id?{...i,qty:Math.max(0,i.qty+d)}:i).filter(i=>i.qty>0));
+  const clearCart  = () => { setCart([]); showToast("Carrito vaciado"); };
+  const total      = cart.reduce((s,i)=>s+i.price*i.qty,0);
+  const totalItems = cart.reduce((s,i)=>s+i.qty,0);
+
+  // ── Save sale ─────────────────────────────────────────────────────────────
+  const confirmSale = async (payInfo) => {
+    if (!cart.length||saving) return;
+    setSaving(true);
+    try {
+      await addDoc(collection(db,"sales"),{
+        total, method:payInfo.method,
+        cash_paid:payInfo.cash_paid, mp_paid:payInfo.mp_paid,
+        change_amount:payInfo.change_amount,
+        items:cart.map(i=>({product_id:i.id,product_name:i.name,product_price:i.price,qty:i.qty})),
+        created_at:Timestamp.now()
+      });
+      setCart([]);
+      setPayModal(false);
+      showToast("✓ Venta registrada");
+      if (isMobile) setMobileView("products");
+      const today = new Date().toISOString().split("T")[0];
+      if (salesDate===today) loadSales(salesDate);
+    } catch(e) { showToast("Error al guardar la venta",true); }
+    finally    { setSaving(false); }
+  };
+
+  // ── Save product ──────────────────────────────────────────────────────────
+  const saveProduct = async (p) => {
+    setSaving(true);
+    try {
+      if (p.id) {
+        await updateDoc(doc(db,"products",p.id),{name:p.name,price:p.price,img_url:p.img_url});
+        showToast(`"${p.name}" actualizado`);
+      } else {
+        await addDoc(collection(db,"products"),{name:p.name,price:p.price,img_url:p.img_url,created_at:Timestamp.now()});
+        showToast(`"${p.name}" agregado`);
+      }
+      await loadProducts();
+      setProductModal(null);
+    } catch(e) { showToast("Error al guardar el producto",true); }
+    finally    { setSaving(false); }
+  };
+
+  // ── Delete product ────────────────────────────────────────────────────────
+  const deleteProduct = async (id) => {
+    setSaving(true);
+    try {
+      await deleteDoc(doc(db,"products",id));
+      setCart(prev=>prev.filter(i=>i.id!==id));
+      await loadProducts();
+      setConfirmDelete(null);
+      showToast("Producto eliminado");
+    } catch(e) { showToast("Error al eliminar",true); }
+    finally    { setSaving(false); }
+  };
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
+  const sumTotal    = sales.reduce((s,v)=>s+v.total,0);
+  const sumEfectivo = sales.reduce((s,v)=>s+(v.cash_paid||0),0);
+  const sumMP       = sales.reduce((s,v)=>s+(v.mp_paid||0),0);
+  const sumItems    = sales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0);
+
+  const methodLabel = (sale) => {
+    if (sale.method==="efectivo")      return {label:"💵 EFECTIVO",color:C.green,bg:C.greenBg};
+    if (sale.method==="transferencia") return {label:"📲 TRANSFER",color:C.blue, bg:C.blueBg};
+    return {label:"🔀 MIXTO",color:C.amber,bg:C.amberBg};
+  };
+
+  // ── Product Grid ──────────────────────────────────────────────────────────
+  const ProductGrid = () => (
+    <div>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:18,flexWrap:"wrap",gap:10}}>
+        <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:20,letterSpacing:3,color:C.text2}}>
+          PRODUCTOS <span style={{color:C.text3,fontWeight:400,fontSize:16}}>({products.length})</span>
+        </span>
+        <button onClick={()=>setProductModal({editing:null})} style={{background:C.purple,color:"#fff",border:"none",borderRadius:9,padding:"8px 20px",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:14,letterSpacing:1.5,cursor:"pointer",boxShadow:`0 3px 12px ${C.purple}44`}}>+ AGREGAR</button>
+      </div>
+      {loading ? (
+        <div style={{display:"flex",alignItems:"center",justifyContent:"center",padding:80,color:C.text3,fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:2,flexDirection:"column",gap:16}}>
+          <div style={{width:40,height:40,border:`3px solid ${C.purpleBg}`,borderTop:`3px solid ${C.purple}`,borderRadius:"50%",animation:"spin 0.8s linear infinite"}} />
+          CARGANDO...
+          <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+        </div>
+      ) : products.length===0 ? (
+        <div style={{textAlign:"center",padding:60,color:C.text3}}>
+          <div style={{fontSize:44,marginBottom:10}}>📦</div>
+          <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:16,letterSpacing:2}}>SIN PRODUCTOS<br/><span style={{fontWeight:400,fontSize:14}}>Usá "+ AGREGAR" para empezar</span></div>
+        </div>
+      ) : (
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(150px,1fr))",gap:14}}>
+          {products.map(p=>(
+            <div key={p.id} style={{background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:14,overflow:"hidden",position:"relative",cursor:"pointer",userSelect:"none",transform:pressedId===p.id?"scale(0.96)":"scale(1)",transition:"transform 0.1s, border-color 0.18s, box-shadow 0.18s",boxShadow:C.shadow}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor=C.purpleL;e.currentTarget.style.boxShadow=`0 4px 18px ${C.purple}30`;e.currentTarget.style.transform="translateY(-2px)";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=C.border;e.currentTarget.style.boxShadow=C.shadow;e.currentTarget.style.transform="scale(1)";setPressedId(null);}}>
+              <div style={{position:"absolute",top:7,right:7,display:"flex",gap:4,zIndex:10}}>
+                <button onClick={e=>{e.stopPropagation();setProductModal({editing:p});}} style={{background:"#ffffffdd",backdropFilter:"blur(4px)",border:`1px solid ${C.border}`,borderRadius:7,color:C.purple,width:28,height:28,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>✏️</button>
+                <button onClick={e=>{e.stopPropagation();setConfirmDelete(p);}} style={{background:"#ffffffdd",backdropFilter:"blur(4px)",border:`1px solid ${C.border}`,borderRadius:7,color:C.red,width:28,height:28,cursor:"pointer",fontSize:13,display:"flex",alignItems:"center",justifyContent:"center"}}>🗑️</button>
+              </div>
+              <div onClick={()=>{addToCart(p);setPressedId(p.id);setTimeout(()=>setPressedId(null),130);}}>
+                <div style={{position:"relative",paddingTop:"70%",overflow:"hidden",background:C.purpleBg}}>
+                  <img src={p.img_url||PLACEHOLDER} alt={p.name} style={{position:"absolute",inset:0,width:"100%",height:"100%",objectFit:"cover"}} onError={e=>{e.target.src=PLACEHOLDER;}} />
+                </div>
+                <div style={{padding:"10px 12px"}}>
+                  <div style={{fontSize:13,fontWeight:600,color:C.text,marginBottom:4,lineHeight:1.3}}>{p.name}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:15,fontWeight:700,color:C.purple}}>{fmt(p.price)}</div>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+
+  // ── Cart Panel ────────────────────────────────────────────────────────────
+  const CartPanel = () => (
+    <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.surface}}>
+      <div style={{padding:"14px 16px 10px",borderBottom:`1px solid ${C.border}`,display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+        <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:15,letterSpacing:2,color:C.text2}}>
+          CARRITO
+          {totalItems>0&&<span style={{marginLeft:8,background:C.purpleBg,color:C.purple,borderRadius:20,padding:"2px 9px",fontSize:13,fontWeight:700}}>{totalItems}</span>}
+        </span>
+        {cart.length>0&&<button onClick={clearCart} style={{background:C.redBg,border:`1px solid ${C.red}33`,borderRadius:7,color:C.red,padding:"5px 12px",cursor:"pointer",fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:700,letterSpacing:1}}>VACIAR</button>}
+      </div>
+      <div style={{flex:1,overflow:"auto",padding:"4px 0"}}>
+        {cart.length===0 ? (
+          <div style={{textAlign:"center",padding:"48px 20px",color:C.text3}}>
+            <div style={{fontSize:44,marginBottom:10}}>🛒</div>
+            <div style={{fontFamily:"'Barlow Condensed',sans-serif",letterSpacing:1,fontSize:14}}>TOCÁ UN PRODUCTO<br/>PARA AGREGAR</div>
+          </div>
+        ) : cart.map(item=>(
+          <div key={item.id} style={{display:"flex",alignItems:"center",padding:"9px 14px",borderBottom:`1px solid ${C.border}`,gap:10}}>
+            <img src={item.img_url||PLACEHOLDER} alt={item.name} style={{width:40,height:40,borderRadius:8,objectFit:"cover",flexShrink:0,border:`1px solid ${C.border}`}} onError={e=>{e.target.src=PLACEHOLDER;}} />
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:13,fontWeight:600,color:C.text,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{item.name}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.purple,fontWeight:700}}>{fmt(item.price*item.qty)}</div>
+            </div>
+            <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
+              <button onClick={()=>changeQty(item.id,-1)} style={{width:28,height:28,background:C.surface2,border:`1.5px solid ${C.border}`,borderRadius:7,color:C.text2,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>−</button>
+              <span style={{fontFamily:"'DM Mono',monospace",fontSize:14,color:C.text,minWidth:20,textAlign:"center",fontWeight:700}}>{item.qty}</span>
+              <button onClick={()=>changeQty(item.id,1)} style={{width:28,height:28,background:C.purpleBg,border:`1.5px solid ${C.purpleXL}`,borderRadius:7,color:C.purple,fontSize:18,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>+</button>
+            </div>
+          </div>
+        ))}
+      </div>
+      <div style={{borderTop:`1.5px solid ${C.border}`,padding:"16px 16px 18px",background:C.surface2}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:14}}>
+          <span style={{fontFamily:"'Barlow Condensed',sans-serif",color:C.text2,fontSize:14,letterSpacing:2}}>TOTAL</span>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:30,fontWeight:700,color:C.text}}>{fmt(total)}</span>
+        </div>
+        <button onClick={()=>{if(cart.length)setPayModal(true);else showToast("El carrito está vacío");}}
+          style={{width:"100%",background:cart.length?C.purple:C.border,color:cart.length?"#fff":C.text3,border:"none",borderRadius:10,padding:"15px 0",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:18,letterSpacing:2,cursor:cart.length?"pointer":"not-allowed",transition:"background 0.2s",boxShadow:cart.length?`0 4px 18px ${C.purple}55`:"none"}}>
+          COBRAR
+        </button>
+      </div>
+    </div>
+  );
+
+  // ── Render ────────────────────────────────────────────────────────────────
+  return (
+    <>
+      <link rel="preconnect" href="https://fonts.googleapis.com" />
+      <link href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@400;700;900&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@400;500;700&display=swap" rel="stylesheet" />
+      <div style={{minHeight:"100vh",background:C.bg,color:C.text,fontFamily:"'DM Sans','Segoe UI',sans-serif"}}>
+
+        {/* HEADER */}
+        <header style={{background:C.surface,borderBottom:`1.5px solid ${C.border}`,padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:66,position:"sticky",top:0,zIndex:100,boxShadow:"0 2px 12px #6d28d914",gap:12}}>
+          <img src="/logo.png" alt="MAGO Drinks" style={{height:50,objectFit:"contain"}} />
+          <div style={{display:"flex",gap:8}}>
+            {[["caja","CAJA"],["resumen","RESUMEN"]].map(([key,label])=>(
+              <button key={key} onClick={()=>setTab(key)} style={{background:tab===key?C.purple:C.purpleBg,color:tab===key?"#fff":C.purple,border:`1.5px solid ${tab===key?C.purple:C.purpleXL+"66"}`,borderRadius:9,padding:"8px 18px",fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:14,letterSpacing:1.5,cursor:"pointer",transition:"all 0.15s",boxShadow:tab===key?`0 3px 12px ${C.purple}44`:"none"}}>
+                {label}
+                {key==="resumen"&&sales.length>0&&<span style={{marginLeft:6,background:tab==="resumen"?"#fff3":"#fff",color:C.purple,borderRadius:20,padding:"1px 7px",fontSize:12,fontWeight:700}}>{sales.length}</span>}
+              </button>
+            ))}
+          </div>
+        </header>
+
+        {/* CAJA */}
+        {tab==="caja" && (
+          isMobile ? (
+            <div style={{height:"calc(100vh - 66px)",display:"flex",flexDirection:"column"}}>
+              <div style={{display:"flex",background:C.surface,borderBottom:`1.5px solid ${C.border}`}}>
+                {[["products","PRODUCTOS"],["cart",`CARRITO (${totalItems})`]].map(([v,label])=>(
+                  <button key={v} onClick={()=>setMobileView(v)} style={{flex:1,padding:"12px 0",background:"transparent",color:mobileView===v?C.purple:C.text3,border:"none",borderBottom:`3px solid ${mobileView===v?C.purple:"transparent"}`,fontFamily:"'Barlow Condensed',sans-serif",fontWeight:700,fontSize:14,letterSpacing:1.5,cursor:"pointer"}}>{label}</button>
+                ))}
+              </div>
+              <div style={{flex:1,overflow:"auto",padding:mobileView==="products"?16:0}}>
+                {mobileView==="products"?<ProductGrid/>:<CartPanel/>}
+              </div>
+            </div>
+          ) : (
+            <div style={{display:"grid",gridTemplateColumns:"1fr 320px",height:"calc(100vh - 66px)",overflow:"hidden"}}>
+              <div style={{overflow:"auto",padding:"22px 24px",background:C.bg}}><ProductGrid/></div>
+              <div style={{borderLeft:`1.5px solid ${C.border}`,overflow:"hidden"}}><CartPanel/></div>
+            </div>
+          )
+        )}
+
+        {/* RESUMEN */}
+        {tab==="resumen" && (
+          <div style={{maxWidth:860,margin:"0 auto",padding:"28px 20px"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:24,flexWrap:"wrap",gap:12}}>
+              <h2 style={{fontFamily:"'Barlow Condensed',sans-serif",fontWeight:900,fontSize:28,letterSpacing:3,color:C.purple,margin:0}}>RESUMEN DEL DÍA</h2>
+              <input type="date" value={salesDate} onChange={e=>setSalesDate(e.target.value)}
+                style={{background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:8,padding:"8px 14px",color:C.text,fontFamily:"'DM Mono',monospace",fontSize:14,outline:"none",cursor:"pointer"}}
+                onFocus={e=>e.target.style.borderColor=C.purple} onBlur={e=>e.target.style.borderColor=C.border} />
+            </div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:14,marginBottom:32}}>
+              {[
+                {label:"TOTAL RECAUDADO", val:fmt(sumTotal),    accent:C.purple, bg:C.purpleBg},
+                {label:"EFECTIVO",        val:fmt(sumEfectivo), accent:C.green,  bg:C.greenBg},
+                {label:"TRANSFER / MP",   val:fmt(sumMP),       accent:C.blue,   bg:C.blueBg},
+                {label:"ARTÍCULOS",       val:sumItems,         accent:C.amber,  bg:C.amberBg},
+              ].map(({label,val,accent,bg})=>(
+                <div key={label} style={{background:bg,border:`1.5px solid ${accent}33`,borderRadius:14,padding:"18px 20px",boxShadow:C.shadow}}>
+                  <div style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:11,letterSpacing:2,color:C.text2,marginBottom:8}}>{label}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:26,color:accent}}>{val}</div>
+                </div>
+              ))}
+            </div>
+            {sales.length===0 ? (
+              <div style={{textAlign:"center",padding:"60px 0",color:C.text3,fontFamily:"'Barlow Condensed',sans-serif",fontSize:18,letterSpacing:2}}>NO HAY VENTAS PARA ESTA FECHA</div>
+            ) : (
+              <div style={{display:"flex",flexDirection:"column",gap:10}}>
+                {sales.map((sale,idx)=>{
+                  const m=methodLabel(sale);
+                  const ts=sale.created_at?.toDate?.()??new Date();
+                  return (
+                    <div key={sale.id} style={{background:C.surface,border:`1.5px solid ${C.border}`,borderRadius:14,padding:"14px 18px",boxShadow:C.shadow}}>
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",flexWrap:"wrap",gap:8,marginBottom:8}}>
+                        <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                          <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.text3}}>#{sales.length-idx}</span>
+                          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:13,letterSpacing:1.5,color:C.text3}}>{ts.toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})}</span>
+                          <span style={{fontFamily:"'Barlow Condensed',sans-serif",fontSize:12,fontWeight:700,letterSpacing:1,padding:"3px 10px",borderRadius:6,background:m.bg,color:m.color}}>{m.label}</span>
+                        </div>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:20,color:C.text}}>{fmt(sale.total)}</span>
+                      </div>
+                      <div style={{fontFamily:"'DM Sans',sans-serif",fontSize:13,color:C.text2,marginBottom:sale.change_amount>0||sale.method==="mixto"?6:0}}>
+                        {(sale.items||[]).map(i=>`${i.product_name} x${i.qty}`).join(" · ")}
+                      </div>
+                      {(sale.method==="mixto"||sale.change_amount>0) && (
+                        <div style={{display:"flex",gap:10,flexWrap:"wrap",marginTop:4}}>
+                          {sale.method==="mixto"&&<>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:C.green,background:C.greenBg,padding:"2px 8px",borderRadius:6}}>💵 {fmt(sale.cash_paid)}</span>
+                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:C.blue,background:C.blueBg,padding:"2px 8px",borderRadius:6}}>📲 {fmt(sale.mp_paid)}</span>
+                          </>}
+                          {sale.change_amount>0&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:13,color:C.amber,background:C.amberBg,padding:"2px 8px",borderRadius:6}}>↩ Vuelto: {fmt(sale.change_amount)}</span>}
+                        </div>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+
+      {payModal     &&<PaymentModal   total={total} onClose={()=>setPayModal(false)}     onConfirm={confirmSale}  saving={saving}/>}
+      {productModal &&<ProductModal   product={productModal.editing} onClose={()=>setProductModal(null)} onSave={saveProduct} saving={saving}/>}
+      {confirmDelete&&<ConfirmDialog  msg={`¿Eliminar "${confirmDelete.name}"?`} onConfirm={()=>deleteProduct(confirmDelete.id)} onCancel={()=>setConfirmDelete(null)}/>}
+      <Toast msg={toast.msg} visible={toast.visible} isError={toast.isError}/>
+    </>
+  );
+}
