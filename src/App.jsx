@@ -286,13 +286,13 @@ export default function App() {
       img.onload = () => {
         const canvas = document.createElement("canvas");
         // Max 300px, quality 0.5 → keeps it well under 100KB
-        const MAX = 300;
+        const MAX = 200;
         let w = img.width, h = img.height;
         if (w > h) { if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; } }
         else        { if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; } }
         canvas.width = w; canvas.height = h;
         canvas.getContext("2d").drawImage(img, 0, 0, w, h);
-        resolve(canvas.toDataURL("image/jpeg", 0.5));
+        resolve(canvas.toDataURL("image/jpeg", 0.4));
       };
       img.onerror = () => resolve(""); // fallback: no image
       img.src = e.target.result;
@@ -306,7 +306,21 @@ export default function App() {
     setSaving(true);
     try {
       let finalUrl = p.img_url || PLACEHOLDER;
-      if (p.imgFile) finalUrl = await uploadImage(p.imgFile);
+
+      // If user picked a file, compress to tiny base64
+      if (p.imgFile) {
+        try {
+          const b64 = await Promise.race([
+            uploadImage(p.imgFile),
+            new Promise((_,rej)=>setTimeout(()=>rej(new Error("timeout")),8000))
+          ]);
+          // Only use if result is small enough for Firestore (<500KB)
+          if (b64 && b64.length < 500000) finalUrl = b64;
+        } catch(imgErr) {
+          console.warn("Image processing skipped:", imgErr);
+          // continue saving without the image
+        }
+      }
 
       const data = { name:p.name, price:p.price, img_url:finalUrl };
       if (p.id) {
