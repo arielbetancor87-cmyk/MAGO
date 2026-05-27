@@ -3,8 +3,7 @@ import {
   collection, addDoc, updateDoc, deleteDoc,
   doc, getDocs, query, where, Timestamp
 } from "firebase/firestore";
-import { ref, uploadBytes, getDownloadURL } from "firebase/storage";
-import { db, storage } from "./lib/firebase.js";
+import { db } from "./lib/firebase.js";
 
 const PLACEHOLDER = "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=300&q=80";
 const fmt = (n) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0);
@@ -279,12 +278,28 @@ export default function App() {
   const total      = cart.reduce((s,i)=>s+i.price*i.qty,0);
   const totalItems = cart.reduce((s,i)=>s+i.qty,0);
 
-  // ── Upload image to Storage ───────────────────────────────────────────────
-  const uploadImage = async(file)=>{
-    const storageRef = ref(storage,`products/${Date.now()}_${file.name}`);
-    await uploadBytes(storageRef,file);
-    return await getDownloadURL(storageRef);
-  };
+  // ── Convert image to base64 (no Storage needed) ─────────────────────────
+  const uploadImage = (file) => new Promise((resolve, reject) => {
+    // Resize to max 600px to keep Firestore document small
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement("canvas");
+        const MAX = 600;
+        let w = img.width, h = img.height;
+        if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+        if (h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+        canvas.width = w; canvas.height = h;
+        canvas.getContext("2d").drawImage(img, 0, 0, w, h);
+        resolve(canvas.toDataURL("image/jpeg", 0.75));
+      };
+      img.onerror = reject;
+      img.src = e.target.result;
+    };
+    reader.onerror = reject;
+    reader.readAsDataURL(file);
+  });
 
   // ── Save product ──────────────────────────────────────────────────────────
   const saveProduct = async(p)=>{
