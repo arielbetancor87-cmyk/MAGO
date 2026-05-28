@@ -539,6 +539,7 @@ export default function App(){
   const [delModal,setDelModal]=useState(null)
   const [mobile,setMobile]=useState(window.innerWidth<768)
   const [mView,setMView]=useState("prods")
+  const [search,setSearch]=useState("")
 
   useEffect(()=>{
     const h=()=>setMobile(window.innerWidth<768)
@@ -666,6 +667,10 @@ export default function App(){
   if(!user)return(<><style>{CSS}</style><AuthScreen/></>)
 
   // product grid
+  const filteredProds=prods.filter(p=>
+    p.name.toLowerCase().includes(search.toLowerCase())
+  )
+
   const ProdGrid=()=>(
     <div style={{padding:"18px 16px"}}>
       <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
@@ -683,9 +688,37 @@ export default function App(){
         </button>
       </div>
 
+      {/* SEARCH BAR */}
+      <div style={{position:"relative",marginBottom:16}}>
+        <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",
+          fontSize:16,pointerEvents:"none",color:C.tx3}}>🔍</span>
+        <input
+          type="text"
+          value={search}
+          onChange={e=>setSearch(e.target.value)}
+          placeholder="Buscar producto..."
+          style={{width:"100%",background:C.card,border:`1.5px solid ${C.br}`,
+          borderRadius:12,color:C.tx,padding:"11px 36px 11px 40px",fontSize:15,
+          outline:"none",fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box"}}
+          onFocus={e=>{e.target.style.borderColor=C.vm;e.target.style.boxShadow=`0 0 0 3px ${C.vl}28`}}
+          onBlur={e=>{e.target.style.borderColor=C.br;e.target.style.boxShadow="none"}}
+        />
+        {search&&(
+          <button onClick={()=>setSearch("")}
+            style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",
+            background:"none",border:"none",color:C.tx3,fontSize:18,
+            display:"flex",alignItems:"center",padding:4}}>✕</button>
+        )}
+      </div>
+
       {loadP?(
         <div style={{display:"flex",justifyContent:"center",padding:70}}><Spin s={32}/></div>
-      ):prods.length===0?(
+      ):filteredProds.length===0&&search?(
+        <div style={{textAlign:"center",padding:"40px 20px",color:C.tx3}}>
+          <div style={{fontSize:36,marginBottom:10}}>🔍</div>
+          <p style={{fontSize:14,fontWeight:600,color:C.tx2}}>Sin resultados para "{search}"</p>
+        </div>
+      ):prods.length===0&&!search?(
         <div style={{textAlign:"center",padding:"50px 20px",color:C.tx3}}>
           <div style={{width:72,height:72,background:C.vbg,borderRadius:22,
             display:"flex",alignItems:"center",justifyContent:"center",
@@ -695,7 +728,7 @@ export default function App(){
         </div>
       ):(
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))",gap:12}}>
-          {prods.map(p=>(
+          {filteredProds.map(p=>(
             <div key={p.id} style={{background:C.card,border:`1.5px solid ${C.br}`,
               borderRadius:16,overflow:"hidden",position:"relative",
               boxShadow:C.sh}}>
