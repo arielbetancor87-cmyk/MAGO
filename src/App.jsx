@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, query, where, Timestamp
+  doc, getDocs, query, where, Timestamp, setDoc, getDoc
 } from "firebase/firestore"
 import {
   onAuthStateChanged, signOut,
@@ -11,13 +11,22 @@ import {
 } from "firebase/auth"
 import { db, auth } from "./lib/firebase.js"
 
-/* ─── helpers ─────────────────────────────────────────────────────── */
+/* ─── CONFIG ─────────────────────────────────────────────── */
+// Cambiá este email por el tuyo — es el único que puede acceder al panel admin
+const ADMIN_EMAIL = "ariel.betancor87@gmail.com"
+
+/* ─── helpers ─────────────────────────────────────────────── */
 const $=(n)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
 const today=()=>new Date().toISOString().split("T")[0]
 const uid=()=>"_"+Math.random().toString(36).slice(2)
 const FALLBACK="https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=300&q=80"
+const fmtDate=(ts)=>{
+  if(!ts)return "-"
+  const d=ts?.toDate?ts.toDate():new Date(ts.seconds*1000)
+  return d.toLocaleDateString("es-AR",{day:"2-digit",month:"2-digit",year:"numeric"})
+}
 
-/* ─── compress ────────────────────────────────────────────────────── */
+/* ─── compress ────────────────────────────────────────────── */
 const compress=(file)=>new Promise(ok=>{
   const r=new FileReader()
   r.onload=e=>{
@@ -38,7 +47,7 @@ const compress=(file)=>new Promise(ok=>{
   r.readAsDataURL(file)
 })
 
-/* ─── tokens ──────────────────────────────────────────────────────── */
+/* ─── tokens ──────────────────────────────────────────────── */
 const C={
   bg:"#f4f2fb", card:"#ffffff", card2:"#f7f5fd",
   br:"#e4dff5",
@@ -48,6 +57,7 @@ const C={
   bl:"#2563eb", blbg:"#dbeafe",
   am:"#d97706", ambg:"#fef3c7",
   er:"#dc2626", erbg:"#fee2e2",
+  gold:"#b45309", goldbg:"#fef3c7",
   sh:"0 2px 12px rgba(91,33,182,.10)",
   shM:"0 8px 32px rgba(91,33,182,.16)",
 }
@@ -66,13 +76,11 @@ button{cursor:pointer;-webkit-appearance:none;appearance:none}
 button:active{opacity:.85;transform:scale(.97)}
 `
 
-/* ─── Spinner ─────────────────────────────────────────────────────── */
 const Spin=({s=20,c=C.vm})=>(
   <div style={{width:s,height:s,flexShrink:0,border:`2.5px solid ${c}22`,
     borderTop:`2.5px solid ${c}`,borderRadius:"50%",animation:"spin .7s linear infinite"}}/>
 )
 
-/* ─── Toast ───────────────────────────────────────────────────────── */
 let _tt
 function useToast(){
   const [t,setT]=useState({m:"",on:false,err:false})
@@ -96,7 +104,7 @@ function useToast(){
 }
 
 /* ════════════════════════════════════════════════════════════
-   LOGIN / REGISTER
+   AUTH SCREEN
 ════════════════════════════════════════════════════════════ */
 function AuthScreen(){
   const [mode,setMode]=useState("login")
@@ -131,14 +139,31 @@ function AuthScreen(){
       if(mode==="register"){
         const cr=await createUserWithEmailAndPassword(auth,email.trim(),pass)
         await updateProfile(cr.user,{displayName:name.trim()})
+        // Register user in Firestore
+        await setDoc(doc(db,"users",cr.user.uid),{
+          uid:cr.user.uid,
+          email:email.trim().toLowerCase(),
+          name:name.trim(),
+          status:"active",
+          plan:"free",
+          registered_at:Timestamp.now(),
+          last_login:Timestamp.now(),
+          notes:"",
+        })
       }else{
         await signInWithEmailAndPassword(auth,email.trim(),pass)
+        // Update last login
+        try{
+          await updateDoc(doc(db,"users",(await signInWithEmailAndPassword(auth,email.trim(),pass)).user.uid),{
+            last_login:Timestamp.now()
+          })
+        }catch(_){}
       }
     }catch(e){setErr(errMsg(e.code))}
     finally{setBusy(false)}
   }
 
-  const onKey=e=>{ if(e.key==="Enter") submit() }
+  const onKey=e=>{ if(e.key==="Enter")submit() }
 
   const inp=(val,set,ph,type="text")=>(
     <input type={type} value={val} placeholder={ph}
@@ -154,15 +179,11 @@ function AuthScreen(){
     <div style={{minHeight:"100vh",background:`linear-gradient(160deg,${C.vbg} 0%,#fff 55%,${C.bg} 100%)`,
       display:"flex",flexDirection:"column",alignItems:"center",
       justifyContent:"center",padding:"20px 16px"}}>
-
       <img src="/logo.png" alt="MAGO Drinks"
         style={{height:76,objectFit:"contain",marginBottom:28,
         filter:"drop-shadow(0 6px 18px rgba(91,33,182,.22))"}}/>
-
       <div className="fadeUp" style={{background:C.card,borderRadius:22,padding:"28px 24px",
         width:"100%",maxWidth:390,boxShadow:C.shM,border:`1px solid ${C.br}`}}>
-
-        {/* tabs */}
         <div style={{display:"flex",background:C.card2,borderRadius:12,padding:4,marginBottom:24}}>
           {[["login","Iniciar sesión"],["register","Crear cuenta"]].map(([k,l])=>(
             <button key={k} onClick={()=>{setMode(k);setErr("")}}
@@ -170,74 +191,395 @@ function AuthScreen(){
               background:mode===k?C.card:"transparent",
               color:mode===k?C.v:C.tx3,
               fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:14,
-              boxShadow:mode===k?C.sh:"none",transition:"all .18s"}}>
-              {l}
-            </button>
+              boxShadow:mode===k?C.sh:"none",transition:"all .18s"}}>{l}</button>
           ))}
         </div>
-
         <div style={{display:"flex",flexDirection:"column",gap:14}}>
-
           {mode==="register"&&(
             <div>
-              <label style={{display:"block",fontSize:11,fontWeight:700,
-                color:C.tx2,letterSpacing:.6,marginBottom:6}}>NOMBRE</label>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>NOMBRE</label>
               {inp(name,setName,"Tu nombre")}
             </div>
           )}
-
           <div>
-            <label style={{display:"block",fontSize:11,fontWeight:700,
-              color:C.tx2,letterSpacing:.6,marginBottom:6}}>EMAIL</label>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>EMAIL</label>
             {inp(email,setEmail,"tucuenta@email.com","email")}
           </div>
-
           <div>
-            <label style={{display:"block",fontSize:11,fontWeight:700,
-              color:C.tx2,letterSpacing:.6,marginBottom:6}}>CONTRASEÑA</label>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>CONTRASEÑA</label>
             <div style={{position:"relative"}}>
               {inp(pass,setPass,"Mínimo 6 caracteres",showP?"text":"password")}
               <button onClick={()=>setShowP(!showP)}
-                style={{position:"absolute",right:12,top:"50%",
-                transform:"translateY(-50%)",background:"none",border:"none",
-                color:C.tx3,fontSize:18,display:"flex",alignItems:"center",padding:4}}>
-                {showP?"🙈":"👁️"}
-              </button>
+                style={{position:"absolute",right:12,top:"50%",transform:"translateY(-50%)",
+                background:"none",border:"none",color:C.tx3,fontSize:18,display:"flex",
+                alignItems:"center",padding:4}}>{showP?"🙈":"👁️"}</button>
             </div>
           </div>
-
           {mode==="register"&&(
             <div>
-              <label style={{display:"block",fontSize:11,fontWeight:700,
-                color:C.tx2,letterSpacing:.6,marginBottom:6}}>REPETIR CONTRASEÑA</label>
+              <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>REPETIR CONTRASEÑA</label>
               {inp(pass2,setPass2,"Repetí la contraseña",showP?"text":"password")}
             </div>
           )}
-
           {err&&(
             <div style={{background:C.erbg,border:`1px solid ${C.er}33`,borderRadius:10,
-              padding:"11px 14px",color:C.er,fontSize:14,display:"flex",
-              alignItems:"flex-start",gap:8}}>
-              ⚠️ {err}
-            </div>
+              padding:"11px 14px",color:C.er,fontSize:14}}>⚠️ {err}</div>
           )}
-
           <button onClick={submit} disabled={busy}
             style={{width:"100%",background:busy?C.vl:`linear-gradient(135deg,${C.v},${C.vm})`,
             color:"#fff",border:"none",borderRadius:12,padding:"15px 0",
             fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:16,
             boxShadow:busy?"none":`0 5px 18px ${C.v}44`,
-            display:"flex",alignItems:"center",justifyContent:"center",gap:10,
-            marginTop:4}}>
+            display:"flex",alignItems:"center",justifyContent:"center",gap:10,marginTop:4}}>
             {busy&&<Spin s={18} c="#fff"/>}
             {busy?"...":(mode==="login"?"Ingresar":"Crear cuenta")}
           </button>
         </div>
       </div>
-
       <p style={{marginTop:18,color:C.tx3,fontSize:12,textAlign:"center",lineHeight:1.6}}>
         Tus productos y ventas quedan guardados<br/>en tu cuenta personal
       </p>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   ADMIN PANEL
+════════════════════════════════════════════════════════════ */
+function AdminPanel({user,onLogout,toast}){
+  const [users,setUsers]=useState([])
+  const [loading,setLoading]=useState(true)
+  const [search,setSearch]=useState("")
+  const [editUser,setEditUser]=useState(null)
+  const [filter,setFilter]=useState("all") // all | active | suspended | pending
+
+  const loadUsers=async()=>{
+    setLoading(true)
+    try{
+      const snap=await getDocs(collection(db,"users"))
+      const list=snap.docs.map(d=>({id:d.id,...d.data()}))
+      list.sort((a,b)=>(b.registered_at?.seconds||0)-(a.registered_at?.seconds||0))
+      setUsers(list)
+    }catch(e){console.error(e)}
+    finally{setLoading(false)}
+  }
+
+  useEffect(()=>{ loadUsers() },[])
+
+  const updateUserField=async(uid,data)=>{
+    try{
+      await updateDoc(doc(db,"users",uid),data)
+      setUsers(prev=>prev.map(u=>u.uid===uid?{...u,...data}:u))
+      toast("Usuario actualizado")
+    }catch(e){ toast("Error al actualizar",true) }
+  }
+
+  const statusColors={
+    active:{bg:C.okbg,c:C.ok,label:"✅ Activo"},
+    suspended:{bg:C.erbg,c:C.er,label:"🚫 Suspendido"},
+    pending:{bg:C.ambg,c:C.am,label:"⏳ Pago pendiente"},
+    free:{bg:C.blbg,c:C.bl,label:"🆓 Gratis"},
+  }
+
+  const filtered=users.filter(u=>{
+    const matchSearch=!search||
+      u.email?.toLowerCase().includes(search.toLowerCase())||
+      u.name?.toLowerCase().includes(search.toLowerCase())
+    const matchFilter=filter==="all"||u.status===filter
+    return matchSearch&&matchFilter
+  })
+
+  const stats={
+    total:users.length,
+    active:users.filter(u=>u.status==="active").length,
+    suspended:users.filter(u=>u.status==="suspended").length,
+    pending:users.filter(u=>u.status==="pending").length,
+  }
+
+  return(
+    <div style={{minHeight:"100vh",background:C.bg}}>
+      {/* HEADER */}
+      <header style={{background:C.card,borderBottom:`1px solid ${C.br}`,
+        padding:"0 20px",display:"flex",alignItems:"center",
+        justifyContent:"space-between",height:62,position:"sticky",top:0,
+        zIndex:100,boxShadow:C.sh,gap:12}}>
+        <div style={{display:"flex",alignItems:"center",gap:12}}>
+          <img src="/logo.png" alt="MAGO" style={{height:42,objectFit:"contain"}}/>
+          <div style={{background:`linear-gradient(135deg,${C.gold},${C.am})`,
+            color:"#fff",borderRadius:8,padding:"4px 10px",
+            fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:11,letterSpacing:1}}>
+            ⭐ SUPER ADMIN
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <span style={{fontSize:12,color:C.tx3,fontWeight:500}}>{user.email}</span>
+          <button onClick={onLogout}
+            style={{background:C.erbg,border:`1px solid ${C.er}22`,borderRadius:8,
+            color:C.er,padding:"6px 12px",fontFamily:"'DM Sans',sans-serif",
+            fontSize:12,fontWeight:700}}>Salir</button>
+        </div>
+      </header>
+
+      <div style={{maxWidth:1000,margin:"0 auto",padding:"24px 16px"}}>
+        <h1 style={{fontSize:24,fontWeight:800,color:C.tx,marginBottom:4}}>
+          Panel de Administración
+        </h1>
+        <p style={{fontSize:13,color:C.tx3,marginBottom:24}}>
+          Gestión de usuarios y suscripciones del sistema MAGO Drinks POS
+        </p>
+
+        {/* STATS */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
+          gap:12,marginBottom:24}}>
+          {[
+            {l:"Total usuarios",v:stats.total,  c:C.v, bg:C.vbg, i:"👥"},
+            {l:"Activos",       v:stats.active,  c:C.ok,bg:C.okbg,i:"✅"},
+            {l:"Pago pendiente",v:stats.pending, c:C.am,bg:C.ambg,i:"⏳"},
+            {l:"Suspendidos",   v:stats.suspended,c:C.er,bg:C.erbg,i:"🚫"},
+          ].map(({l,v,c,bg,i})=>(
+            <div key={l} style={{background:bg,border:`1.5px solid ${c}22`,
+              borderRadius:14,padding:"14px 16px",boxShadow:C.sh}}>
+              <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+                <span style={{fontSize:16}}>{i}</span>
+                <span style={{fontSize:10,fontWeight:700,color:C.tx2,letterSpacing:.5}}>
+                  {l.toUpperCase()}
+                </span>
+              </div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:28,color:c}}>
+                {v}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        {/* FILTERS + SEARCH */}
+        <div style={{display:"flex",gap:10,marginBottom:16,flexWrap:"wrap",alignItems:"center"}}>
+          <div style={{position:"relative",flex:1,minWidth:200}}>
+            <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
+              fontSize:15,color:C.tx3,pointerEvents:"none"}}>🔍</span>
+            <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+              placeholder="Buscar por nombre o email..."
+              style={{width:"100%",background:C.card,border:`1.5px solid ${C.br}`,
+              borderRadius:10,color:C.tx,padding:"10px 12px 10px 36px",fontSize:14,
+              outline:"none",fontFamily:"'DM Sans',sans-serif"}}
+              onFocus={e=>{e.target.style.borderColor=C.vm}}
+              onBlur={e=>{e.target.style.borderColor=C.br}}/>
+            {search&&<button onClick={()=>setSearch("")}
+              style={{position:"absolute",right:10,top:"50%",transform:"translateY(-50%)",
+              background:"none",border:"none",color:C.tx3,fontSize:16,padding:4}}>✕</button>}
+          </div>
+          <div style={{display:"flex",gap:6,flexWrap:"wrap"}}>
+            {[["all","Todos"],["active","Activos"],["pending","Pendientes"],["suspended","Suspendidos"]].map(([k,l])=>(
+              <button key={k} onClick={()=>setFilter(k)}
+                style={{padding:"8px 14px",borderRadius:9,border:`1.5px solid ${filter===k?C.vm:C.br}`,
+                background:filter===k?C.vbg:C.card,color:filter===k?C.vm:C.tx2,
+                fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:12}}>
+                {l}
+              </button>
+            ))}
+          </div>
+          <button onClick={loadUsers}
+            style={{padding:"9px 14px",borderRadius:9,border:`1.5px solid ${C.br}`,
+            background:C.card,color:C.tx2,fontFamily:"'DM Sans',sans-serif",
+            fontWeight:600,fontSize:12,display:"flex",alignItems:"center",gap:5}}>
+            🔄 Actualizar
+          </button>
+        </div>
+
+        {/* USER TABLE */}
+        {loading?(
+          <div style={{display:"flex",justifyContent:"center",padding:60}}><Spin s={32}/></div>
+        ):filtered.length===0?(
+          <div style={{textAlign:"center",padding:"50px 0",color:C.tx3}}>
+            <div style={{fontSize:40,marginBottom:10}}>👥</div>
+            <p style={{fontSize:14,fontWeight:600}}>No se encontraron usuarios</p>
+          </div>
+        ):(
+          <div style={{display:"flex",flexDirection:"column",gap:10}}>
+            {filtered.map(u=>{
+              const st=statusColors[u.status]||statusColors.active
+              const isAdmin=u.email?.toLowerCase()===ADMIN_EMAIL.toLowerCase()
+              return(
+                <div key={u.id} style={{background:C.card,border:`1.5px solid ${C.br}`,
+                  borderRadius:14,padding:"16px 18px",boxShadow:C.sh,
+                  opacity:u.status==="suspended"?.7:1}}>
+                  <div style={{display:"flex",justifyContent:"space-between",
+                    alignItems:"flex-start",flexWrap:"wrap",gap:12}}>
+
+                    {/* User info */}
+                    <div style={{display:"flex",alignItems:"center",gap:12,flex:1,minWidth:200}}>
+                      <div style={{width:42,height:42,background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                        borderRadius:12,display:"flex",alignItems:"center",
+                        justifyContent:"center",color:"#fff",fontWeight:700,
+                        fontSize:17,flexShrink:0}}>
+                        {(u.name||u.email||"?")[0].toUpperCase()}
+                      </div>
+                      <div style={{minWidth:0}}>
+                        <div style={{display:"flex",alignItems:"center",gap:7,flexWrap:"wrap"}}>
+                          <span style={{fontSize:15,fontWeight:700,color:C.tx}}>
+                            {u.name||"Sin nombre"}
+                          </span>
+                          {isAdmin&&<span style={{background:`linear-gradient(135deg,${C.gold},${C.am})`,
+                            color:"#fff",borderRadius:6,padding:"2px 7px",
+                            fontSize:10,fontWeight:700,letterSpacing:.5}}>ADMIN</span>}
+                          <span style={{fontSize:11,fontWeight:700,padding:"3px 9px",
+                            borderRadius:20,background:st.bg,color:st.c}}>{st.label}</span>
+                        </div>
+                        <p style={{fontSize:12,color:C.tx2,marginTop:2,fontFamily:"'DM Mono',monospace"}}>
+                          {u.email}
+                        </p>
+                        <p style={{fontSize:11,color:C.tx3,marginTop:3}}>
+                          Registrado: {fmtDate(u.registered_at)} · Último acceso: {fmtDate(u.last_login)}
+                        </p>
+                        {u.notes&&(
+                          <p style={{fontSize:12,color:C.am,marginTop:4,
+                            background:C.ambg,borderRadius:6,padding:"3px 8px",
+                            display:"inline-block"}}>📝 {u.notes}</p>
+                        )}
+                      </div>
+                    </div>
+
+                    {/* Actions */}
+                    {!isAdmin&&(
+                      <div style={{display:"flex",gap:7,flexWrap:"wrap",flexShrink:0}}>
+                        {u.status!=="active"&&(
+                          <button onClick={()=>updateUserField(u.uid,{status:"active"})}
+                            style={{padding:"7px 12px",borderRadius:9,border:`1.5px solid ${C.ok}`,
+                            background:C.okbg,color:C.ok,fontFamily:"'DM Sans',sans-serif",
+                            fontWeight:600,fontSize:12}}>✅ Activar</button>
+                        )}
+                        {u.status!=="pending"&&(
+                          <button onClick={()=>updateUserField(u.uid,{status:"pending"})}
+                            style={{padding:"7px 12px",borderRadius:9,border:`1.5px solid ${C.am}`,
+                            background:C.ambg,color:C.am,fontFamily:"'DM Sans',sans-serif",
+                            fontWeight:600,fontSize:12}}>⏳ Pago pendiente</button>
+                        )}
+                        {u.status!=="suspended"&&(
+                          <button onClick={()=>updateUserField(u.uid,{status:"suspended"})}
+                            style={{padding:"7px 12px",borderRadius:9,border:`1.5px solid ${C.er}`,
+                            background:C.erbg,color:C.er,fontFamily:"'DM Sans',sans-serif",
+                            fontWeight:600,fontSize:12}}>🚫 Suspender</button>
+                        )}
+                        <button onClick={()=>setEditUser(u)}
+                          style={{padding:"7px 12px",borderRadius:9,border:`1.5px solid ${C.br}`,
+                          background:C.card2,color:C.tx2,fontFamily:"'DM Sans',sans-serif",
+                          fontWeight:600,fontSize:12}}>✏️ Nota</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* EDIT NOTE MODAL */}
+      {editUser&&(
+        <NoteModal user={editUser} onClose={()=>setEditUser(null)}
+          onSave={(notes)=>{ updateUserField(editUser.uid,{notes}); setEditUser(null) }}/>
+      )}
+    </div>
+  )
+}
+
+function NoteModal({user,onClose,onSave}){
+  const [notes,setNotes]=useState(user.notes||"")
+  return(
+    <div style={{position:"fixed",inset:0,zIndex:900,background:"rgba(91,33,182,.18)",
+      display:"flex",alignItems:"center",justifyContent:"center",padding:20}} onClick={onClose}>
+      <div className="fadeUp" style={{background:C.card,borderRadius:20,padding:26,
+        maxWidth:380,width:"100%",boxShadow:C.shM,border:`1px solid ${C.br}`}}
+        onClick={e=>e.stopPropagation()}>
+        <h3 style={{fontSize:17,fontWeight:700,marginBottom:4}}>📝 Nota interna</h3>
+        <p style={{fontSize:12,color:C.tx3,marginBottom:16}}>
+          {user.name} · {user.email}
+        </p>
+        <textarea value={notes} onChange={e=>setNotes(e.target.value)}
+          placeholder="Ej: Pagó hasta marzo, debe abril..."
+          rows={4} style={{width:"100%",background:C.card2,border:`1.5px solid ${C.br}`,
+          borderRadius:10,color:C.tx,padding:"12px 14px",fontSize:14,outline:"none",
+          fontFamily:"'DM Sans',sans-serif",resize:"vertical"}}
+          onFocus={e=>e.target.style.borderColor=C.vm}
+          onBlur={e=>e.target.style.borderColor=C.br}/>
+        <div style={{display:"flex",gap:10,marginTop:14}}>
+          <button onClick={onClose} style={{flex:1,padding:"11px 0",background:C.card2,
+            border:`1.5px solid ${C.br}`,borderRadius:10,color:C.tx2,
+            fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:15}}>Cancelar</button>
+          <button onClick={()=>onSave(notes)} style={{flex:1,padding:"11px 0",
+            background:`linear-gradient(135deg,${C.v},${C.vm})`,border:"none",
+            borderRadius:10,color:"#fff",fontFamily:"'DM Sans',sans-serif",
+            fontWeight:700,fontSize:15,boxShadow:`0 4px 14px ${C.v}44`}}>Guardar</button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   SUSPENDED SCREEN
+════════════════════════════════════════════════════════════ */
+function SuspendedScreen({onLogout}){
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",
+      flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <img src="/logo.png" style={{height:70,objectFit:"contain",marginBottom:28}}/>
+      <div style={{background:C.card,borderRadius:22,padding:"32px 28px",
+        maxWidth:380,width:"100%",textAlign:"center",boxShadow:C.shM,
+        border:`1px solid ${C.br}`}}>
+        <div style={{width:64,height:64,background:C.erbg,borderRadius:18,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:30,margin:"0 auto 16px"}}>🚫</div>
+        <h2 style={{fontSize:20,fontWeight:800,color:C.tx,marginBottom:10}}>
+          Cuenta suspendida
+        </h2>
+        <p style={{fontSize:14,color:C.tx2,lineHeight:1.6,marginBottom:8}}>
+          Tu acceso al sistema ha sido suspendido.
+        </p>
+        <p style={{fontSize:13,color:C.tx3,lineHeight:1.6,marginBottom:24}}>
+          Por favor contactá al administrador para regularizar tu situación.
+        </p>
+        <button onClick={onLogout}
+          style={{width:"100%",background:C.erbg,border:`1.5px solid ${C.er}33`,
+          borderRadius:12,padding:"13px 0",color:C.er,
+          fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:15}}>
+          Cerrar sesión
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════
+   PENDING PAYMENT SCREEN
+════════════════════════════════════════════════════════════ */
+function PendingScreen({onLogout}){
+  return(
+    <div style={{minHeight:"100vh",background:C.bg,display:"flex",
+      flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24}}>
+      <img src="/logo.png" style={{height:70,objectFit:"contain",marginBottom:28}}/>
+      <div style={{background:C.card,borderRadius:22,padding:"32px 28px",
+        maxWidth:380,width:"100%",textAlign:"center",boxShadow:C.shM,
+        border:`1px solid ${C.br}`}}>
+        <div style={{width:64,height:64,background:C.ambg,borderRadius:18,
+          display:"flex",alignItems:"center",justifyContent:"center",
+          fontSize:30,margin:"0 auto 16px"}}>⏳</div>
+        <h2 style={{fontSize:20,fontWeight:800,color:C.tx,marginBottom:10}}>
+          Pago pendiente
+        </h2>
+        <p style={{fontSize:14,color:C.tx2,lineHeight:1.6,marginBottom:8}}>
+          Tu suscripción mensual tiene un pago pendiente.
+        </p>
+        <p style={{fontSize:13,color:C.tx3,lineHeight:1.6,marginBottom:24}}>
+          Una vez realizado el pago, el administrador activará tu cuenta.
+        </p>
+        <button onClick={onLogout}
+          style={{width:"100%",background:C.ambg,border:`1.5px solid ${C.am}33`,
+          borderRadius:12,padding:"13px 0",color:C.am,
+          fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:15}}>
+          Cerrar sesión
+        </button>
+      </div>
     </div>
   )
 }
@@ -261,7 +603,6 @@ function ProductModal({p,onClose,onSave}){
     setPreview(URL.createObjectURL(f));setUrl("");setB64(null);setBusy(true)
     setB64(await compress(f));setBusy(false)
   }
-
   const save=()=>{
     if(!name.trim())return setErr("Nombre requerido")
     const pr=parseFloat(price)
@@ -269,56 +610,39 @@ function ProductModal({p,onClose,onSave}){
     if(busy)return setErr("Esperá la foto...")
     onSave({id:p?.id,name:name.trim(),price:pr,img:b64||url.trim()||FALLBACK})
   }
-
   const I={width:"100%",background:C.card2,border:`1.5px solid ${C.br}`,borderRadius:10,
     color:C.tx,padding:"12px 14px",fontSize:16,outline:"none",
     fontFamily:"'DM Sans',sans-serif",display:"block"}
-
   return(
     <div style={{position:"fixed",inset:0,zIndex:800,background:"rgba(91,33,182,.18)",
-      display:"flex",alignItems:"flex-end",justifyContent:"center"}}
-      onClick={onClose}>
+      display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
       <div className="fadeUp" style={{background:C.card,borderRadius:"22px 22px 0 0",
         padding:"24px 20px 32px",width:"100%",maxWidth:500,
         maxHeight:"92vh",overflowY:"auto",position:"relative",
-        boxShadow:"0 -8px 40px rgba(91,33,182,.18)"}}
-        onClick={e=>e.stopPropagation()}>
-
-        {/* drag handle */}
-        <div style={{width:40,height:4,background:C.br,borderRadius:4,
-          margin:"-8px auto 18px"}}/>
-
+        boxShadow:"0 -8px 40px rgba(91,33,182,.18)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{width:40,height:4,background:C.br,borderRadius:4,margin:"-8px auto 18px"}}/>
         <button onClick={onClose} style={{position:"absolute",top:18,right:18,
           background:C.vbg,border:"none",color:C.vm,width:32,height:32,
-          borderRadius:10,fontSize:16,display:"flex",
-          alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
-
+          borderRadius:10,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
         <h2 style={{fontSize:19,fontWeight:800,color:C.tx,marginBottom:20}}>
           {edit?"✏️ Editar producto":"➕ Nuevo producto"}
         </h2>
-
         <div style={{marginBottom:14}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,
-            letterSpacing:.6,marginBottom:6}}>NOMBRE *</label>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>NOMBRE *</label>
           <input type="text" value={name} onChange={e=>setName(e.target.value)}
             placeholder="Ej: Vodka Skyy 750ml" style={I}
-            onFocus={e=>{e.target.style.borderColor=C.vm}}
-            onBlur={e=>{e.target.style.borderColor=C.br}}/>
+            onFocus={e=>e.target.style.borderColor=C.vm}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
         </div>
-
         <div style={{marginBottom:18}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,
-            letterSpacing:.6,marginBottom:6}}>PRECIO *</label>
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:6}}>PRECIO *</label>
           <input type="number" value={price} onChange={e=>setPrice(e.target.value)}
             placeholder="Ej: 8500" min={0} style={I}
-            onFocus={e=>{e.target.style.borderColor=C.vm}}
-            onBlur={e=>{e.target.style.borderColor=C.br}}/>
+            onFocus={e=>e.target.style.borderColor=C.vm}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
         </div>
-
         <div style={{marginBottom:20}}>
-          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,
-            letterSpacing:.6,marginBottom:10}}>FOTO</label>
-
+          <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:10}}>FOTO</label>
           {preview&&(
             <div style={{position:"relative",marginBottom:12}}>
               <img src={preview} style={{width:"100%",height:130,objectFit:"cover",
@@ -330,28 +654,21 @@ function ProductModal({p,onClose,onSave}){
                 display:"flex",alignItems:"center",justifyContent:"center",fontSize:14}}>✕</button>
             </div>
           )}
-
           <button onClick={()=>fRef.current.click()}
             style={{width:"100%",padding:"12px",background:C.vbg,
             border:`1.5px dashed ${C.vl}`,borderRadius:12,color:C.vm,
             fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:14,
-            display:"flex",alignItems:"center",justifyContent:"center",
-            gap:8,marginBottom:10}}>
+            display:"flex",alignItems:"center",justifyContent:"center",gap:8,marginBottom:10}}>
             {busy?<><Spin s={16}/> Procesando...</>:"📷 Subir foto"}
           </button>
-          <input ref={fRef} type="file" accept="image/*"
-            onChange={pickFile} style={{display:"none"}}/>
-
+          <input ref={fRef} type="file" accept="image/*" onChange={pickFile} style={{display:"none"}}/>
           <input type="text" value={url}
             onChange={e=>{setUrl(e.target.value);setB64(null);setPreview(e.target.value)}}
             placeholder="o pegá una URL..." style={{...I,fontSize:13}}
-            onFocus={e=>{e.target.style.borderColor=C.vm}}
-            onBlur={e=>{e.target.style.borderColor=C.br}}/>
+            onFocus={e=>e.target.style.borderColor=C.vm}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
         </div>
-
-        {err&&<div style={{background:C.erbg,borderRadius:10,padding:"10px 14px",
-          color:C.er,fontSize:13,marginBottom:14}}>⚠️ {err}</div>}
-
+        {err&&<div style={{background:C.erbg,borderRadius:10,padding:"10px 14px",color:C.er,fontSize:13,marginBottom:14}}>⚠️ {err}</div>}
         <button onClick={save} disabled={busy}
           style={{width:"100%",background:busy?C.vl:`linear-gradient(135deg,${C.v},${C.vm})`,
           color:"#fff",border:"none",borderRadius:12,padding:"15px 0",
@@ -375,53 +692,37 @@ function PayModal({total,onClose,onPay}){
   const c=parseFloat(cash)||0,m=parseFloat(mp)||0
   const change=mode==="efectivo"?Math.max(0,c-total):mode==="mixto"?Math.max(0,c-(total-m)):0
   const ok=mode==="efectivo"?c>=total:mode==="transferencia"?true:(m+c)>=total
-
   const N={width:"100%",background:C.card2,border:`1.5px solid ${C.br}`,borderRadius:10,
     color:C.tx,padding:"13px 15px",fontSize:22,outline:"none",
     fontFamily:"'DM Mono',monospace",display:"block",letterSpacing:.5}
-
   return(
     <div style={{position:"fixed",inset:0,zIndex:800,background:"rgba(91,33,182,.18)",
-      display:"flex",alignItems:"flex-end",justifyContent:"center"}}
-      onClick={onClose}>
+      display:"flex",alignItems:"flex-end",justifyContent:"center"}} onClick={onClose}>
       <div className="fadeUp" style={{background:C.card,borderRadius:"22px 22px 0 0",
         padding:"24px 20px 32px",width:"100%",maxWidth:500,
         maxHeight:"92vh",overflowY:"auto",position:"relative",
-        boxShadow:"0 -8px 40px rgba(91,33,182,.18)"}}
-        onClick={e=>e.stopPropagation()}>
-
-        <div style={{width:40,height:4,background:C.br,borderRadius:4,
-          margin:"-8px auto 18px"}}/>
+        boxShadow:"0 -8px 40px rgba(91,33,182,.18)"}} onClick={e=>e.stopPropagation()}>
+        <div style={{width:40,height:4,background:C.br,borderRadius:4,margin:"-8px auto 18px"}}/>
         <button onClick={onClose} style={{position:"absolute",top:18,right:18,
           background:C.vbg,border:"none",color:C.vm,width:32,height:32,
-          borderRadius:10,fontSize:16,display:"flex",
-          alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
-
-        <p style={{fontSize:11,fontWeight:700,color:C.tx3,letterSpacing:1,marginBottom:2}}>
-          COBRAR VENTA
-        </p>
-        <p style={{fontFamily:"'DM Mono',monospace",fontSize:34,fontWeight:700,
-          color:C.tx,marginBottom:20,letterSpacing:.5}}>{$(total)}</p>
-
+          borderRadius:10,fontSize:16,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>✕</button>
+        <p style={{fontSize:11,fontWeight:700,color:C.tx3,letterSpacing:1,marginBottom:2}}>COBRAR VENTA</p>
+        <p style={{fontFamily:"'DM Mono',monospace",fontSize:34,fontWeight:700,color:C.tx,marginBottom:20,letterSpacing:.5}}>{$(total)}</p>
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:20}}>
           {[{k:"efectivo",i:"💵",l:"Efectivo"},{k:"transferencia",i:"📲",l:"Transfer"},{k:"mixto",i:"🔀",l:"Mixto"}].map(({k,i,l})=>(
             <button key={k} onClick={()=>setMode(k)}
               style={{padding:"12px 4px",borderRadius:12,
               background:mode===k?`linear-gradient(135deg,${C.v},${C.vm})`:C.card2,
-              color:mode===k?"#fff":C.tx2,
-              border:`1.5px solid ${mode===k?C.vm:C.br}`,
+              color:mode===k?"#fff":C.tx2,border:`1.5px solid ${mode===k?C.vm:C.br}`,
               fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:13,
               boxShadow:mode===k?`0 4px 14px ${C.v}44`:"none"}}>
-              <div style={{fontSize:20,marginBottom:2}}>{i}</div>
-              {l}
+              <div style={{fontSize:20,marginBottom:2}}>{i}</div>{l}
             </button>
           ))}
         </div>
-
         {(mode==="efectivo"||mode==="mixto")&&(
           <div style={{marginBottom:14}}>
-            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,
-              letterSpacing:.6,marginBottom:7}}>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:7}}>
               {mode==="mixto"?"💵 MONTO EFECTIVO":"MONTO RECIBIDO"}
             </label>
             <input type="number" value={cash} onChange={e=>setCash(e.target.value)}
@@ -430,15 +731,11 @@ function PayModal({total,onClose,onPay}){
               onBlur={e=>e.target.style.borderColor=C.br}/>
           </div>
         )}
-
         {(mode==="transferencia"||mode==="mixto")&&(
           <div style={{marginBottom:14}}>
-            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,
-              letterSpacing:.6,marginBottom:7}}>📲 MONTO MP / TRANSFER</label>
+            <label style={{display:"block",fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:7}}>📲 MONTO MP / TRANSFER</label>
             {mode==="transferencia"
-              ?<div style={{padding:"13px 15px",background:C.blbg,
-                  border:`1.5px solid ${C.bl}44`,borderRadius:10,
-                  fontFamily:"'DM Mono',monospace",color:C.bl,fontSize:22}}>{$(total)}</div>
+              ?<div style={{padding:"13px 15px",background:C.blbg,border:`1.5px solid ${C.bl}44`,borderRadius:10,fontFamily:"'DM Mono',monospace",color:C.bl,fontSize:22}}>{$(total)}</div>
               :<input type="number" value={mp} onChange={e=>setMp(e.target.value)}
                   placeholder="0" style={N}
                   onFocus={e=>e.target.style.borderColor=C.bl}
@@ -446,37 +743,22 @@ function PayModal({total,onClose,onPay}){
             }
           </div>
         )}
-
         {mode==="mixto"&&m>0&&(
           <div style={{background:C.vbg,borderRadius:12,padding:"11px 15px",marginBottom:14}}>
-            <p style={{fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:4}}>
-              EFECTIVO REQUERIDO
-            </p>
-            <p style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:C.v,fontWeight:700}}>
-              {$(Math.max(0,total-m))}
-            </p>
+            <p style={{fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:4}}>EFECTIVO REQUERIDO</p>
+            <p style={{fontFamily:"'DM Mono',monospace",fontSize:22,color:C.v,fontWeight:700}}>{$(Math.max(0,total-m))}</p>
           </div>
         )}
-
         {(mode==="efectivo"||mode==="mixto")&&c>0&&(
-          <div style={{background:change>0?C.okbg:C.erbg,
-            border:`1.5px solid ${change>0?C.ok:C.er}33`,
-            borderRadius:12,padding:"12px 15px",marginBottom:16}}>
-            <p style={{fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:4}}>
-              VUELTO
-            </p>
-            <p style={{fontFamily:"'DM Mono',monospace",fontSize:32,fontWeight:700,
-              color:change>0?C.ok:C.er}}>{$(change)}</p>
-            {change<0&&<p style={{fontSize:13,color:C.er,marginTop:4,fontWeight:600}}>
-              ⚠️ Monto insuficiente
-            </p>}
+          <div style={{background:change>0?C.okbg:C.erbg,border:`1.5px solid ${change>0?C.ok:C.er}33`,borderRadius:12,padding:"12px 15px",marginBottom:16}}>
+            <p style={{fontSize:11,fontWeight:700,color:C.tx2,letterSpacing:.6,marginBottom:4}}>VUELTO</p>
+            <p style={{fontFamily:"'DM Mono',monospace",fontSize:32,fontWeight:700,color:change>0?C.ok:C.er}}>{$(change)}</p>
+            {change<0&&<p style={{fontSize:13,color:C.er,marginTop:4,fontWeight:600}}>⚠️ Monto insuficiente</p>}
           </div>
         )}
-
         <button onClick={()=>ok&&onPay({mode,cashPaid:c,mpPaid:mode==="transferencia"?total:m,change})}
           disabled={!ok}
-          style={{width:"100%",
-          background:ok?`linear-gradient(135deg,${C.v},${C.vm})`:"#d1c9e8",
+          style={{width:"100%",background:ok?`linear-gradient(135deg,${C.v},${C.vm})`:"#d1c9e8",
           color:ok?"#fff":"#9b90b8",border:"none",borderRadius:12,padding:"16px 0",
           fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:17,
           boxShadow:ok?`0 5px 18px ${C.v}44`:"none"}}>
@@ -487,32 +769,23 @@ function PayModal({total,onClose,onPay}){
   )
 }
 
-/* ─── Delete confirm ─────────────────────────────────────── */
 function Del({name,onYes,onNo}){
   return(
     <div style={{position:"fixed",inset:0,zIndex:900,background:"rgba(91,33,182,.18)",
       display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
       <div className="fadeUp" style={{background:C.card,borderRadius:20,padding:28,
-        maxWidth:320,width:"100%",textAlign:"center",
-        boxShadow:C.shM,border:`1px solid ${C.br}`}}>
-        <div style={{width:56,height:56,background:C.erbg,borderRadius:16,
-          display:"flex",alignItems:"center",justifyContent:"center",
-          fontSize:26,margin:"0 auto 14px"}}>🗑️</div>
+        maxWidth:320,width:"100%",textAlign:"center",boxShadow:C.shM,border:`1px solid ${C.br}`}}>
+        <div style={{width:56,height:56,background:C.erbg,borderRadius:16,display:"flex",
+          alignItems:"center",justifyContent:"center",fontSize:26,margin:"0 auto 14px"}}>🗑️</div>
         <h3 style={{fontSize:17,fontWeight:700,marginBottom:8}}>Eliminar producto</h3>
-        <p style={{color:C.tx2,fontSize:14,marginBottom:22,lineHeight:1.5}}>
-          ¿Eliminar <b>"{name}"</b>?
-        </p>
+        <p style={{color:C.tx2,fontSize:14,marginBottom:22,lineHeight:1.5}}>¿Eliminar <b>"{name}"</b>?</p>
         <div style={{display:"flex",gap:10}}>
           <button onClick={onNo} style={{flex:1,padding:"12px 0",background:C.card2,
             border:`1.5px solid ${C.br}`,borderRadius:10,color:C.tx2,
-            fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:15}}>
-            Cancelar
-          </button>
+            fontFamily:"'DM Sans',sans-serif",fontWeight:600,fontSize:15}}>Cancelar</button>
           <button onClick={onYes} style={{flex:1,padding:"12px 0",
-            background:`linear-gradient(135deg,${C.er},#b91c1c)`,
-            border:"none",borderRadius:10,color:"#fff",
-            fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:15,
-            boxShadow:`0 4px 14px ${C.er}40`}}>
+            background:`linear-gradient(135deg,${C.er},#b91c1c)`,border:"none",
+            borderRadius:10,color:"#fff",fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:15}}>
             Eliminar
           </button>
         </div>
@@ -522,11 +795,12 @@ function Del({name,onYes,onNo}){
 }
 
 /* ════════════════════════════════════════════════════════════
-   MAIN
+   MAIN APP
 ════════════════════════════════════════════════════════════ */
 export default function App(){
   const {show:toast,el:toastEl}=useToast()
   const [user,setUser]=useState(undefined)
+  const [userStatus,setUserStatus]=useState(null) // active | suspended | pending
   const [tab,setTab]=useState("caja")
   const [prods,setProds]=useState([])
   const [cart,setCart]=useState([])
@@ -547,14 +821,43 @@ export default function App(){
     return()=>window.removeEventListener("resize",h)
   },[])
 
-  useEffect(()=>onAuthStateChanged(auth,u=>setUser(u||null)),[])
+  useEffect(()=>{
+    return onAuthStateChanged(auth,async u=>{
+      if(!u){ setUser(null); setUserStatus(null); return }
+      setUser(u)
+      // Check user status & update last_login
+      try{
+        const snap=await getDoc(doc(db,"users",u.uid))
+        if(snap.exists()){
+          const data=snap.data()
+          setUserStatus(data.status||"active")
+          // Update last login silently
+          await updateDoc(doc(db,"users",u.uid),{last_login:Timestamp.now()})
+        }else{
+          // User exists in Auth but not in Firestore — create record
+          await setDoc(doc(db,"users",u.uid),{
+            uid:u.uid, email:u.email?.toLowerCase()||"",
+            name:u.displayName||"",status:"active",plan:"free",
+            registered_at:Timestamp.now(), last_login:Timestamp.now(), notes:"",
+          })
+          setUserStatus("active")
+        }
+      }catch(e){ setUserStatus("active") }
+    })
+  },[])
+
+  const isAdmin=user?.email?.toLowerCase()===ADMIN_EMAIL.toLowerCase()
+
+  const handleLogout=async()=>{
+    await signOut(auth)
+    setProds([]);setCart([]);setSales([])
+  }
 
   const prodsCol=user?collection(db,`users/${user.uid}/products`):null
   const salesCol=user?collection(db,`users/${user.uid}/sales`):null
 
-  // load products
   useEffect(()=>{
-    if(!user||!prodsCol)return
+    if(!user||!prodsCol||isAdmin)return
     setLoadP(true)
     getDocs(prodsCol)
       .then(s=>{
@@ -564,9 +867,8 @@ export default function App(){
       }).catch(console.warn).finally(()=>setLoadP(false))
   },[user])
 
-  // load sales
   useEffect(()=>{
-    if(!user||!salesCol||tab!=="hist")return
+    if(!user||!salesCol||tab!=="hist"||isAdmin)return
     setLoadS(true)
     getDocs(query(salesCol,where("date","==",date)))
       .then(s=>{
@@ -576,9 +878,9 @@ export default function App(){
       }).catch(console.warn).finally(()=>setLoadS(false))
   },[user,tab,date])
 
-  // cart
   const cartTotal=cart.reduce((s,i)=>s+i.price*i.qty,0)
   const cartQty=cart.reduce((s,i)=>s+i.qty,0)
+  const filteredProds=prods.filter(p=>p.name.toLowerCase().includes(search.toLowerCase()))
 
   const addItem=p=>{
     setCart(prev=>{
@@ -589,7 +891,6 @@ export default function App(){
   }
   const setQty=(id,q)=>setCart(prev=>q<=0?prev.filter(i=>i.id!==id):prev.map(i=>i.id===id?{...i,qty:q}:i))
 
-  // save product optimistic
   const saveProd=p=>{
     if(!user||!prodsCol)return
     const img=p.img||FALLBACK
@@ -607,7 +908,6 @@ export default function App(){
     }
   }
 
-  // delete optimistic
   const delProd=id=>{
     if(!user)return
     setProds(prev=>prev.filter(p=>p.id!==id))
@@ -616,7 +916,6 @@ export default function App(){
     if(!id.startsWith("_"))deleteDoc(doc(db,`users/${user.uid}/products`,id)).catch(console.warn)
   }
 
-  // pay optimistic
   const paySale=info=>{
     if(!user||!salesCol)return
     const td=today()
@@ -652,7 +951,7 @@ export default function App(){
   const goDay=d=>{const x=new Date(date);x.setDate(x.getDate()+d);setDate(x.toISOString().split("T")[0])}
   const isToday=date===today()
 
-  // loading
+  /* ── STATES ── */
   if(user===undefined){
     return(
       <div style={{minHeight:"100vh",background:C.bg,display:"flex",
@@ -663,18 +962,15 @@ export default function App(){
       </div>
     )
   }
+  if(!user) return(<><style>{CSS}</style><AuthScreen/></>)
+  if(isAdmin) return(<><style>{CSS}</style><AdminPanel user={user} onLogout={handleLogout} toast={toast}/>{toastEl}</>)
+  if(userStatus==="suspended") return(<><style>{CSS}</style><SuspendedScreen onLogout={handleLogout}/></>)
+  if(userStatus==="pending") return(<><style>{CSS}</style><PendingScreen onLogout={handleLogout}/></>)
 
-  if(!user)return(<><style>{CSS}</style><AuthScreen/></>)
-
-  // product grid
-  const filteredProds=prods.filter(p=>
-    p.name.toLowerCase().includes(search.toLowerCase())
-  )
-
+  /* ProdGrid */
   const ProdGrid=()=>(
     <div style={{padding:"18px 16px"}}>
-      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
-        marginBottom:16,gap:8}}>
+      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:8}}>
         <div>
           <h2 style={{fontSize:18,fontWeight:800,color:C.tx,margin:0}}>Productos</h2>
           <p style={{fontSize:12,color:C.tx3,margin:0}}>{prods.length} artículos</p>
@@ -687,30 +983,20 @@ export default function App(){
           <span style={{fontSize:18,lineHeight:1}}>+</span> Agregar
         </button>
       </div>
-
-      {/* SEARCH BAR */}
-      <div style={{position:"relative",marginBottom:16}}>
-        <span style={{position:"absolute",left:13,top:"50%",transform:"translateY(-50%)",
-          fontSize:16,pointerEvents:"none",color:C.tx3}}>🔍</span>
-        <input
-          type="text"
-          value={search}
-          onChange={e=>setSearch(e.target.value)}
+      <div style={{position:"relative",marginBottom:14}}>
+        <span style={{position:"absolute",left:12,top:"50%",transform:"translateY(-50%)",
+          fontSize:15,color:C.tx3,pointerEvents:"none"}}>🔍</span>
+        <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
           placeholder="Buscar producto..."
           style={{width:"100%",background:C.card,border:`1.5px solid ${C.br}`,
-          borderRadius:12,color:C.tx,padding:"11px 36px 11px 40px",fontSize:15,
-          outline:"none",fontFamily:"'DM Sans',sans-serif",boxSizing:"border-box"}}
-          onFocus={e=>{e.target.style.borderColor=C.vm;e.target.style.boxShadow=`0 0 0 3px ${C.vl}28`}}
-          onBlur={e=>{e.target.style.borderColor=C.br;e.target.style.boxShadow="none"}}
-        />
-        {search&&(
-          <button onClick={()=>setSearch("")}
-            style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",
-            background:"none",border:"none",color:C.tx3,fontSize:18,
-            display:"flex",alignItems:"center",padding:4}}>✕</button>
-        )}
+          borderRadius:12,color:C.tx,padding:"11px 36px 11px 38px",fontSize:15,
+          outline:"none",fontFamily:"'DM Sans',sans-serif"}}
+          onFocus={e=>e.target.style.borderColor=C.vm}
+          onBlur={e=>e.target.style.borderColor=C.br}/>
+        {search&&<button onClick={()=>setSearch("")}
+          style={{position:"absolute",right:11,top:"50%",transform:"translateY(-50%)",
+          background:"none",border:"none",color:C.tx3,fontSize:18,padding:4}}>✕</button>}
       </div>
-
       {loadP?(
         <div style={{display:"flex",justifyContent:"center",padding:70}}><Spin s={32}/></div>
       ):filteredProds.length===0&&search?(
@@ -730,8 +1016,7 @@ export default function App(){
         <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))",gap:12}}>
           {filteredProds.map(p=>(
             <div key={p.id} style={{background:C.card,border:`1.5px solid ${C.br}`,
-              borderRadius:16,overflow:"hidden",position:"relative",
-              boxShadow:C.sh}}>
+              borderRadius:16,overflow:"hidden",position:"relative",boxShadow:C.sh}}>
               <div style={{position:"absolute",top:7,right:7,display:"flex",gap:4,zIndex:5}}>
                 <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
                   style={{background:"rgba(255,255,255,.92)",border:`1px solid ${C.br}`,
@@ -749,12 +1034,8 @@ export default function App(){
                     onError={e=>{e.target.src=FALLBACK}}/>
                 </div>
                 <div style={{padding:"10px 12px"}}>
-                  <div style={{fontSize:13,fontWeight:600,color:C.tx,lineHeight:1.3,marginBottom:3}}>
-                    {p.name}
-                  </div>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:15,fontWeight:700,color:C.v}}>
-                    {$(p.price)}
-                  </div>
+                  <div style={{fontSize:13,fontWeight:600,color:C.tx,lineHeight:1.3,marginBottom:3}}>{p.name}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontSize:15,fontWeight:700,color:C.v}}>{$(p.price)}</div>
                 </div>
               </div>
             </div>
@@ -764,37 +1045,28 @@ export default function App(){
     </div>
   )
 
-  // cart panel
   const CartPanel=()=>(
     <div style={{display:"flex",flexDirection:"column",height:"100%",background:C.card}}>
       <div style={{padding:"14px 16px 10px",borderBottom:`1.5px solid ${C.br}`,
         display:"flex",justifyContent:"space-between",alignItems:"center"}}>
-        <h3 style={{fontSize:15,fontWeight:800,color:C.tx,margin:0,
-          display:"flex",alignItems:"center",gap:8}}>
+        <h3 style={{fontSize:15,fontWeight:800,color:C.tx,margin:0,display:"flex",alignItems:"center",gap:8}}>
           Carrito
           {cartQty>0&&<span style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
-            color:"#fff",borderRadius:20,padding:"2px 9px",fontSize:12,fontWeight:700}}>
-            {cartQty}
-          </span>}
+            color:"#fff",borderRadius:20,padding:"2px 9px",fontSize:12,fontWeight:700}}>{cartQty}</span>}
         </h3>
-        {cart.length>0&&
-          <button onClick={()=>setCart([])}
-            style={{background:C.erbg,border:`1px solid ${C.er}22`,borderRadius:8,
-            color:C.er,padding:"5px 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600}}>
-            Vaciar
-          </button>
-        }
+        {cart.length>0&&<button onClick={()=>setCart([])}
+          style={{background:C.erbg,border:`1px solid ${C.er}22`,borderRadius:8,
+          color:C.er,padding:"5px 12px",fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:600}}>
+          Vaciar
+        </button>}
       </div>
-
-      <div style={{flex:1,overflowY:"auto"}}>
+      <div style={{flex:1,overflowY:"auto",WebkitOverflowScrolling:"touch"}}>
         {cart.length===0?(
           <div style={{textAlign:"center",padding:"46px 20px",color:C.tx3}}>
             <div style={{width:60,height:60,background:C.vbg,borderRadius:18,
               display:"flex",alignItems:"center",justifyContent:"center",
               fontSize:26,margin:"0 auto 12px"}}>🛒</div>
-            <p style={{fontSize:13,fontWeight:500,lineHeight:1.6}}>
-              Tocá un producto<br/>para agregar
-            </p>
+            <p style={{fontSize:13,fontWeight:500,lineHeight:1.6}}>Tocá un producto<br/>para agregar</p>
           </div>
         ):cart.map(it=>(
           <div key={it.id} style={{display:"flex",alignItems:"center",
@@ -804,12 +1076,11 @@ export default function App(){
               flexShrink:0,border:`1px solid ${C.br}`}}
               onError={e=>{e.target.src=FALLBACK}}/>
             <div style={{flex:1,minWidth:0}}>
-              <div style={{fontSize:13,fontWeight:600,color:C.tx,
-                whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>
-                {it.name}
+              <div style={{fontSize:13,fontWeight:600,color:C.tx,whiteSpace:"nowrap",
+                overflow:"hidden",textOverflow:"ellipsis"}}>{it.name}</div>
+              <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,color:C.v,fontWeight:700}}>
+                {$(it.price*it.qty)}
               </div>
-              <div style={{fontFamily:"'DM Mono',monospace",fontSize:12,
-                color:C.v,fontWeight:700}}>{$(it.price*it.qty)}</div>
             </div>
             <div style={{display:"flex",alignItems:"center",gap:5,flexShrink:0}}>
               <button onClick={()=>setQty(it.id,it.qty-1)}
@@ -826,13 +1097,10 @@ export default function App(){
           </div>
         ))}
       </div>
-
       <div style={{borderTop:`1.5px solid ${C.br}`,padding:"15px 15px 18px",background:C.card2}}>
         <div style={{display:"flex",justifyContent:"space-between",alignItems:"baseline",marginBottom:13}}>
           <span style={{fontSize:14,fontWeight:600,color:C.tx2}}>Total</span>
-          <span style={{fontFamily:"'DM Mono',monospace",fontSize:28,fontWeight:700,color:C.tx}}>
-            {$(cartTotal)}
-          </span>
+          <span style={{fontFamily:"'DM Mono',monospace",fontSize:28,fontWeight:700,color:C.tx}}>{$(cartTotal)}</span>
         </div>
         <button onClick={()=>cart.length?setPayModal(true):toast("Carrito vacío")}
           style={{width:"100%",
@@ -850,49 +1118,37 @@ export default function App(){
     <>
       <style>{CSS}</style>
       <div style={{minHeight:"100vh",background:C.bg,color:C.tx}}>
-
-        {/* HEADER */}
-        <header style={{background:C.card,borderBottom:`1px solid ${C.br}`,
-          padding:"0 16px",display:"flex",alignItems:"center",
-          justifyContent:"space-between",height:62,position:"sticky",top:0,
-          zIndex:100,boxShadow:`0 1px 16px rgba(91,33,182,.08)`,gap:10}}>
-
+        <header style={{background:C.card,borderBottom:`1px solid ${C.br}`,padding:"0 16px",
+          display:"flex",alignItems:"center",justifyContent:"space-between",
+          height:62,position:"sticky",top:0,zIndex:100,
+          boxShadow:`0 1px 16px rgba(91,33,182,.08)`,gap:10}}>
           <img src="/logo.png" alt="MAGO" style={{height:44,objectFit:"contain"}}/>
-
           <div style={{display:"flex",alignItems:"center",gap:6}}>
             {[["caja","🏪","CAJA"],["hist","📊","HISTORIAL"]].map(([k,ic,l])=>(
               <button key={k} onClick={()=>setTab(k)}
                 style={{background:tab===k?`linear-gradient(135deg,${C.v},${C.vm})`:C.vbg,
-                color:tab===k?"#fff":C.tx2,
-                border:`1.5px solid ${tab===k?C.vm:C.br}`,borderRadius:10,
-                padding:"8px 12px",fontFamily:"'DM Sans',sans-serif",fontWeight:700,
-                fontSize:12,boxShadow:tab===k?`0 3px 12px ${C.v}44`:"none",
+                color:tab===k?"#fff":C.tx2,border:`1.5px solid ${tab===k?C.vm:C.br}`,
+                borderRadius:10,padding:"8px 12px",fontFamily:"'DM Sans',sans-serif",
+                fontWeight:700,fontSize:12,boxShadow:tab===k?`0 3px 12px ${C.v}44`:"none",
                 display:"flex",alignItems:"center",gap:4}}>
-                <span>{ic}</span><span style={{display:mobile?"none":"inline"}}> {l}</span>
-                {mobile&&<span>{l}</span>}
+                <span>{ic}</span> <span>{l}</span>
               </button>
             ))}
-
-            <div style={{display:"flex",alignItems:"center",gap:6,
-              marginLeft:4,paddingLeft:10,borderLeft:`1px solid ${C.br}`}}>
-              <div style={{width:30,height:30,
-                background:`linear-gradient(135deg,${C.v},${C.vm})`,
-                borderRadius:9,display:"flex",alignItems:"center",
-                justifyContent:"center",color:"#fff",fontWeight:700,fontSize:13,flexShrink:0}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginLeft:4,
+              paddingLeft:10,borderLeft:`1px solid ${C.br}`}}>
+              <div style={{width:30,height:30,background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                borderRadius:9,display:"flex",alignItems:"center",justifyContent:"center",
+                color:"#fff",fontWeight:700,fontSize:13,flexShrink:0}}>
                 {(user.displayName||user.email||"?")[0].toUpperCase()}
               </div>
-              <button onClick={async()=>{
-                await signOut(auth);setProds([]);setCart([]);setSales([])
-              }} style={{background:C.erbg,border:`1px solid ${C.er}22`,borderRadius:8,
+              <button onClick={handleLogout}
+                style={{background:C.erbg,border:`1px solid ${C.er}22`,borderRadius:8,
                 color:C.er,padding:"6px 10px",fontFamily:"'DM Sans',sans-serif",
-                fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>
-                Salir
-              </button>
+                fontSize:11,fontWeight:700,whiteSpace:"nowrap"}}>Salir</button>
             </div>
           </div>
         </header>
 
-        {/* CAJA */}
         {tab==="caja"&&(mobile?(
           <div style={{height:"calc(100vh - 62px)",display:"flex",flexDirection:"column"}}>
             <div style={{display:"flex",background:C.card,borderBottom:`1px solid ${C.br}`}}>
@@ -901,9 +1157,7 @@ export default function App(){
                   style={{flex:1,padding:"12px 0",background:"transparent",
                   color:mView===v?C.vm:C.tx3,border:"none",
                   borderBottom:`3px solid ${mView===v?C.vm:"transparent"}`,
-                  fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:13}}>
-                  {l}
-                </button>
+                  fontFamily:"'DM Sans',sans-serif",fontWeight:700,fontSize:13}}>{l}</button>
               ))}
             </div>
             <div style={{flex:1,overflow:"auto",WebkitOverflowScrolling:"touch"}}>
@@ -918,7 +1172,6 @@ export default function App(){
           </div>
         ))}
 
-        {/* HISTORIAL */}
         {tab==="hist"&&(
           <div style={{maxWidth:860,margin:"0 auto",padding:"22px 16px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",
@@ -931,25 +1184,22 @@ export default function App(){
                 border:`1.5px solid ${C.br}`,borderRadius:14,padding:"6px 8px",boxShadow:C.sh}}>
                 <button onClick={()=>goDay(-1)}
                   style={{background:C.vbg,border:"none",borderRadius:9,color:C.vm,
-                  width:32,height:32,fontSize:18,display:"flex",
-                  alignItems:"center",justifyContent:"center",fontWeight:700}}>‹</button>
+                  width:32,height:32,fontSize:18,display:"flex",alignItems:"center",
+                  justifyContent:"center",fontWeight:700}}>‹</button>
                 <input type="date" value={date} onChange={e=>setDate(e.target.value)}
                   style={{background:"transparent",border:"none",color:C.tx,
                   fontFamily:"'DM Mono',monospace",fontSize:13,fontWeight:500,
                   outline:"none",minWidth:120,textAlign:"center"}}/>
                 <button onClick={()=>goDay(1)} disabled={isToday}
                   style={{background:isToday?C.card2:C.vbg,border:"none",borderRadius:9,
-                  color:isToday?C.tx3:C.vm,width:32,height:32,
-                  fontSize:18,display:"flex",alignItems:"center",justifyContent:"center",fontWeight:700}}>›</button>
-                {!isToday&&
-                  <button onClick={()=>setDate(today())}
-                    style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,border:"none",
-                    borderRadius:9,color:"#fff",padding:"0 12px",height:32,
-                    fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:700}}>Hoy</button>
-                }
+                  color:isToday?C.tx3:C.vm,width:32,height:32,fontSize:18,display:"flex",
+                  alignItems:"center",justifyContent:"center",fontWeight:700}}>›</button>
+                {!isToday&&<button onClick={()=>setDate(today())}
+                  style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,border:"none",
+                  borderRadius:9,color:"#fff",padding:"0 12px",height:32,
+                  fontFamily:"'DM Sans',sans-serif",fontSize:12,fontWeight:700}}>Hoy</button>}
               </div>
             </div>
-
             <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
               gap:10,marginBottom:22}}>
               {[
@@ -967,12 +1217,10 @@ export default function App(){
                       {l.toUpperCase()}
                     </span>
                   </div>
-                  <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,
-                    fontSize:19,color:c}}>{v}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:19,color:c}}>{v}</div>
                 </div>
               ))}
             </div>
-
             {loadS?(
               <div style={{display:"flex",justifyContent:"center",padding:50}}><Spin s={28}/></div>
             ):sales.length===0?(
@@ -1002,8 +1250,9 @@ export default function App(){
                           <span style={{fontSize:11,fontWeight:700,padding:"3px 10px",
                             borderRadius:20,background:m.bg,color:m.c}}>{m.l}</span>
                         </div>
-                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,
-                          fontSize:18,color:C.tx}}>{$(s.total)}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace",fontWeight:700,fontSize:18,color:C.tx}}>
+                          {$(s.total)}
+                        </span>
                       </div>
                       <p style={{fontSize:13,color:C.tx2,lineHeight:1.5,
                         marginBottom:(s.change_amount>0||s.method==="mixto")?6:0}}>
@@ -1021,12 +1270,10 @@ export default function App(){
                               📲 {$(s.mp_paid)}
                             </span>
                           </>}
-                          {s.change_amount>0&&
-                            <span style={{fontFamily:"'DM Mono',monospace",fontSize:12,
-                              color:C.am,background:C.ambg,padding:"3px 10px",borderRadius:20,fontWeight:600}}>
-                              ↩ {$(s.change_amount)}
-                            </span>
-                          }
+                          {s.change_amount>0&&<span style={{fontFamily:"'DM Mono',monospace",fontSize:12,
+                            color:C.am,background:C.ambg,padding:"3px 10px",borderRadius:20,fontWeight:600}}>
+                            ↩ {$(s.change_amount)}
+                          </span>}
                         </div>
                       )}
                     </div>
