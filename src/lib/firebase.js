@@ -1,5 +1,6 @@
-import { initializeApp } from 'firebase/app'
-import { getFirestore, enableIndexedDbPersistence } from 'firebase/firestore'
+import { initializeApp }              from 'firebase/app'
+import { getFirestore }               from 'firebase/firestore'
+import { getAuth, GoogleAuthProvider } from 'firebase/auth'
 
 const app = initializeApp({
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -10,7 +11,6 @@ const app = initializeApp({
   appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 })
 
-export const db = getFirestore(app)
-
-// Enable offline cache — app works even without internet
-enableIndexedDbPersistence(db).catch(() => {})
+export const db       = getFirestore(app)
+export const auth     = getAuth(app)
+export const googleProvider = new GoogleAuthProvider()
