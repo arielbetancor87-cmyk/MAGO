@@ -14,6 +14,7 @@ import { db, auth } from "./lib/firebase.js"
 /* ─── CONFIG ─────────────────────────────────────────────── */
 // Cambiá este email por el tuyo — es el único que puede acceder al panel admin
 const ADMIN_EMAIL = "ariel.betancor87@gmail.com"
+const isAdminEmail = (email) => (email||"").trim().toLowerCase() === ADMIN_EMAIL.toLowerCase()
 
 /* ─── helpers ─────────────────────────────────────────────── */
 const $=(n)=>new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
@@ -151,13 +152,10 @@ function AuthScreen(){
           notes:"",
         })
       }else{
-        await signInWithEmailAndPassword(auth,email.trim(),pass)
-        // Update last login
-        try{
-          await updateDoc(doc(db,"users",(await signInWithEmailAndPassword(auth,email.trim(),pass)).user.uid),{
-            last_login:Timestamp.now()
-          })
-        }catch(_){}
+        // Single call — save result and reuse uid
+        const cr=await signInWithEmailAndPassword(auth,email.trim(),pass)
+        // Update last login silently in background
+        updateDoc(doc(db,"users",cr.user.uid),{last_login:Timestamp.now()}).catch(()=>{})
       }
     }catch(e){setErr(errMsg(e.code))}
     finally{setBusy(false)}
@@ -398,7 +396,7 @@ function AdminPanel({user,onLogout,toast}){
           <div style={{display:"flex",flexDirection:"column",gap:10}}>
             {filtered.map(u=>{
               const st=statusColors[u.status]||statusColors.active
-              const isAdmin=u.email?.toLowerCase()===ADMIN_EMAIL.toLowerCase()
+              const isAdmin=isAdminEmail(u.email)
               return(
                 <div key={u.id} style={{background:C.card,border:`1.5px solid ${C.br}`,
                   borderRadius:14,padding:"16px 18px",boxShadow:C.sh,
@@ -598,11 +596,26 @@ function ProductModal({p,onClose,onSave}){
   const [err,setErr]=useState("")
   const fRef=useRef()
 
+  // Track blob URLs to revoke and avoid memory leaks
+  const blobRef=useRef(null)
+
   const pickFile=async e=>{
     const f=e.target.files[0];if(!f)return
-    setPreview(URL.createObjectURL(f));setUrl("");setB64(null);setBusy(true)
-    setB64(await compress(f));setBusy(false)
+    // Revoke previous blob URL before creating a new one
+    if(blobRef.current){URL.revokeObjectURL(blobRef.current);blobRef.current=null}
+    const objectUrl=URL.createObjectURL(f)
+    blobRef.current=objectUrl
+    setPreview(objectUrl);setUrl("");setB64(null);setBusy(true)
+    const result=await compress(f)
+    // Revoke blob URL after compression — b64 is now the source of truth
+    if(blobRef.current){URL.revokeObjectURL(blobRef.current);blobRef.current=null}
+    setB64(result);setBusy(false)
   }
+
+  // Cleanup on unmount
+  useEffect(()=>()=>{
+    if(blobRef.current)URL.revokeObjectURL(blobRef.current)
+  },[])
   const save=()=>{
     if(!name.trim())return setErr("Nombre requerido")
     const pr=parseFloat(price)
@@ -846,7 +859,7 @@ export default function App(){
     })
   },[])
 
-  const isAdmin=user?.email?.toLowerCase()===ADMIN_EMAIL.toLowerCase()
+  const isAdmin=isAdminEmail(user?.email)
 
   const handleLogout=async()=>{
     await signOut(auth)
