@@ -47,14 +47,14 @@ const compress = (file) => new Promise(ok => {
   r.onload = e => {
     const i = new Image()
     i.onload = () => {
-      const MAX = 240, c = document.createElement("canvas")
+      const MAX = 600, c = document.createElement("canvas")
       let w = i.width, h = i.height
       if (w > h) { if (w > MAX) { h = h*MAX/w|0; w = MAX } }
       else        { if (h > MAX) { w = w*MAX/h|0; h = MAX } }
       c.width = w; c.height = h
       c.getContext("2d").drawImage(i, 0, 0, w, h)
-      const b = c.toDataURL("image/jpeg", .38)
-      ok(b.length < 380000 ? b : "")
+      const b = c.toDataURL("image/jpeg", .78)
+      ok(b.length < 900000 ? b : "")
     }
     i.onerror = () => ok("")
     i.src = e.target.result
