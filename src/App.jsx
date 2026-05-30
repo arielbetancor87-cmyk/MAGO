@@ -25,6 +25,21 @@ const fmtDate = (ts) => {
   const d = ts?.toDate ? ts.toDate() : new Date(ts.seconds * 1000)
   return d.toLocaleDateString("es-AR", {day:"2-digit",month:"2-digit",year:"numeric"})
 }
+const fmtDT = (ts) => {
+  if (!ts) return "-"
+  const d = ts?.toDate ? ts.toDate() : new Date(ts.seconds * 1000)
+  return d.toLocaleString("es-AR", {day:"2-digit",month:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit"})
+}
+const nowLocalDT = () => {
+  const d = new Date()
+  const pad = n => String(n).padStart(2,"0")
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+const startOfDayDT = () => {
+  const d = new Date()
+  const pad = n => String(n).padStart(2,"0")
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`
+}
 
 /* ─── IMAGE COMPRESS ─────────────────────────────────────────────────── */
 const compress = (file) => new Promise(ok => {
@@ -1017,12 +1032,16 @@ export default function App() {
   const [prods,      setProds]      = useState([])
   const [cart,       setCart]       = useState([])
   const [sales,      setSales]      = useState([])
-  const [date,       setDate]       = useState(today)
-  const [vendDate,   setVendDate]   = useState(today)
+  const [histFrom,   setHistFrom]   = useState(startOfDayDT)
+  const [histTo,     setHistTo]     = useState(nowLocalDT)
+  const [vendFrom,   setVendFrom]   = useState(startOfDayDT)
+  const [vendTo,     setVendTo]     = useState(nowLocalDT)
   const [loadP,      setLoadP]      = useState(false)
   const [loadS,      setLoadS]      = useState(false)
   const [vendSales,  setVendSales]  = useState([])
   const [loadV,      setLoadV]      = useState(false)
+  const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
+  const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
   const [payModal,   setPayModal]   = useState(false)
   const [delModal,   setDelModal]   = useState(null)
@@ -1064,6 +1083,7 @@ export default function App() {
   const handleLogout = async () => {
     await signOut(auth)
     setProds([]); setCart([]); setSales([])
+    setActiveShift(null)
   }
 
   useEffect(() => {
@@ -1077,25 +1097,47 @@ export default function App() {
       }).catch(console.warn).finally(() => setLoadP(false))
   }, [user])
 
+  // Shared query by Timestamp range
+  const queryByRange = async (col, from, to) => {
+    const tsFrom = Timestamp.fromDate(new Date(from))
+    const tsTo   = Timestamp.fromDate(new Date(to))
+    const snap   = await getDocs(query(col,
+      where("created_at",">=",tsFrom),
+      where("created_at","<=",tsTo)
+    ))
+    return snap.docs.map(d => ({id:d.id, ...d.data()}))
+  }
+
   useEffect(() => {
     if (!user || !salesCol || tab!=="hist" || isAdmin) return
     setLoadS(true)
-    getDocs(query(salesCol, where("date","==",date)))
-      .then(s => {
-        const list = s.docs.map(d => ({id:d.id, ...d.data()}))
+    queryByRange(salesCol, histFrom, histTo)
+      .then(list => {
         list.sort((a,b) => (b.created_at?.seconds||0) - (a.created_at?.seconds||0))
         setSales(list)
       }).catch(console.warn).finally(() => setLoadS(false))
-  }, [user, tab, date])
+  }, [user, tab, histFrom, histTo])
 
   useEffect(() => {
     if (!user || !salesCol || tab!=="vendidos" || isAdmin) return
     setLoadV(true)
-    getDocs(query(salesCol, where("date","==",vendDate)))
-      .then(s => {
-        setVendSales(s.docs.map(d => ({id:d.id, ...d.data()})))
-      }).catch(console.warn).finally(() => setLoadV(false))
-  }, [user, tab, vendDate])
+    queryByRange(salesCol, vendFrom, vendTo)
+      .then(list => setVendSales(list))
+      .catch(console.warn).finally(() => setLoadV(false))
+  }, [user, tab, vendFrom, vendTo])
+
+  // Load active shift on login
+  useEffect(() => {
+    if (!user || isAdmin) return
+    const shiftsCol = collection(db, `users/${user.uid}/shifts`)
+    getDocs(query(shiftsCol, where("status","==","open")))
+      .then(snap => {
+        if (!snap.empty) {
+          const d = snap.docs[0]
+          setActiveShift({id:d.id, ...d.data()})
+        }
+      }).catch(console.warn)
+  }, [user])
 
   /* cart */
   const cartTotal      = cart.reduce((s,i) => s + i.price*i.qty, 0)
@@ -1151,7 +1193,11 @@ export default function App() {
       items:cart.map(i => ({product_name:i.name, product_price:i.price, qty:i.qty})),
       created_at:{seconds:Date.now()/1000, toDate:()=>new Date()},
     }
-    if (date===td) setSales(prev => [sale,...prev])
+    // Optimistic: add to hist if within current range
+    const saleTs = sale.created_at.seconds * 1000
+    const fromMs = new Date(histFrom).getTime()
+    const toMs   = new Date(histTo).getTime()
+    if (saleTs >= fromMs && saleTs <= toMs) setSales(prev => [sale,...prev])
     setCart([]); setPayModal(false)
     toast("✓ Venta registrada")
     if (mobile) setMView("prods")
@@ -1174,10 +1220,51 @@ export default function App() {
     if (s.method==="transferencia") return {l:"● Transfer", c:C.bl, bg:C.blbg}
     return {l:"● Mixto", c:C.am, bg:C.ambg}
   }
-  const goDay     = d => { const x=new Date(date);     x.setDate(x.getDate()+d); setDate(x.toISOString().split("T")[0]) }
-  const goVendDay = d => { const x=new Date(vendDate); x.setDate(x.getDate()+d); setVendDate(x.toISOString().split("T")[0]) }
-  const isToday   = date===today()
-  const isVendToday = vendDate===today()
+  // Shift functions
+  const shiftsCol = user ? collection(db, `users/${user.uid}/shifts`) : null
+
+  const openShift = async () => {
+    if (!user || !shiftsCol || shiftBusy) return
+    setShiftBusy(true)
+    try {
+      const ref = await addDoc(shiftsCol, {
+        status: "open",
+        opened_at: Timestamp.now(),
+        closed_at: null,
+      })
+      const snap = await getDoc(doc(db, `users/${user.uid}/shifts`, ref.id))
+      const data = {id:ref.id, ...snap.data()}
+      setActiveShift(data)
+      // Set hist range from now
+      const dt = nowLocalDT()
+      setHistFrom(dt); setHistTo(nowLocalDT())
+      setVendFrom(dt); setVendTo(nowLocalDT())
+      toast("✅ Apertura de caja registrada")
+    } catch(e) { toast("Error al abrir caja", true) }
+    finally { setShiftBusy(false) }
+  }
+
+  const closeShift = async () => {
+    if (!user || !activeShift || shiftBusy) return
+    setShiftBusy(true)
+    try {
+      const closedAt = Timestamp.now()
+      await updateDoc(doc(db, `users/${user.uid}/shifts`, activeShift.id), {
+        status: "closed",
+        closed_at: closedAt,
+      })
+      // Set ranges to full shift period
+      const openedD  = activeShift.opened_at.toDate()
+      const closedD  = closedAt.toDate()
+      const pad = n => String(n).padStart(2,"0")
+      const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+      setHistFrom(fmt(openedD)); setHistTo(fmt(closedD))
+      setVendFrom(fmt(openedD)); setVendTo(fmt(closedD))
+      setActiveShift(null)
+      toast("🔒 Cierre de caja registrado")
+    } catch(e) { toast("Error al cerrar caja", true) }
+    finally { setShiftBusy(false) }
+  }
 
   /* ── STATE GATES ── */
   if (user === undefined) return (
@@ -1514,51 +1601,122 @@ export default function App() {
         {tab==="hist" && (
           <div style={{maxWidth:880, margin:"0 auto", padding:"24px 16px"}}>
 
-            {/* nav + title */}
-            <div style={{display:"flex", alignItems:"center",
-              justifyContent:"space-between", marginBottom:24,
-              flexWrap:"wrap", gap:12}}>
-              <div>
-                <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
-                  fontWeight:700, fontSize:24, color:C.tx, margin:0}}>
-                  Historial de ventas
-                </h2>
-                <p style={{fontFamily:"'DM Mono',monospace",
-                  fontSize:12, color:C.tx3, margin:0}}>
-                  {st.count} ventas registradas
-                </p>
-              </div>
+            {/* title + shift bar */}
+            <div style={{marginBottom:20}}>
+              <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
+                fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                Historial de ventas
+              </h2>
+              <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3, margin:0}}>
+                {st.count} ventas en el rango seleccionado
+              </p>
+            </div>
 
-              {/* date picker */}
-              <div style={{display:"flex", alignItems:"center", gap:6,
-                background:C.card, border:`1px solid ${C.br}`,
-                borderRadius:14, padding:"6px 8px", boxShadow:C.sh}}>
-                <button onClick={() => goDay(-1)}
-                  style={{background:C.vbg, border:`1px solid ${C.br}`,
-                    borderRadius:8, color:C.v, width:32, height:32,
-                    fontSize:18, display:"flex", alignItems:"center",
-                    justifyContent:"center", fontWeight:700}}>‹</button>
-                <input type="date" value={date} onChange={e=>setDate(e.target.value)}
-                  style={{background:"transparent", border:"none", color:C.tx,
-                    fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:500,
-                    outline:"none", minWidth:126, textAlign:"center"}}/>
-                <button onClick={() => goDay(1)} disabled={isToday}
-                  style={{background: isToday ? "transparent" : C.vbg,
-                    border:`1px solid ${C.br}`, borderRadius:8,
-                    color: isToday ? C.tx3 : C.v, width:32, height:32,
-                    fontSize:18, display:"flex", alignItems:"center",
-                    justifyContent:"center", fontWeight:700}}>›</button>
-                {!isToday && (
-                  <button onClick={() => setDate(today())}
-                    style={{background:C.vbg, border:`1px solid ${C.v}44`,
-                      borderRadius:8, color:C.v, padding:"0 12px", height:32,
-                      fontFamily:"'Space Grotesk',sans-serif",
-                      fontSize:11, fontWeight:700, letterSpacing:.5}}>HOY</button>
+            {/* ── SHIFT BAR ── */}
+            <div style={{background:C.card, border:`1px solid ${activeShift ? C.ok+"55" : C.br}`,
+              borderRadius:14, padding:"14px 16px", marginBottom:20,
+              display:"flex", alignItems:"center", justifyContent:"space-between",
+              flexWrap:"wrap", gap:12,
+              boxShadow: activeShift ? `0 0 20px ${C.ok}15` : C.sh}}>
+              <div style={{display:"flex", alignItems:"center", gap:10}}>
+                <div style={{width:10, height:10, borderRadius:"50%",
+                  background: activeShift ? C.ok : C.tx3,
+                  boxShadow: activeShift ? `0 0 8px ${C.ok}` : "none",
+                  flexShrink:0}}/>
+                <div>
+                  <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:13,
+                    fontWeight:600, color: activeShift ? C.ok : C.tx2, margin:0}}>
+                    {activeShift ? "Caja abierta" : "Caja cerrada"}
+                  </p>
+                  {activeShift && (
+                    <p style={{fontFamily:"'DM Mono',monospace", fontSize:11,
+                      color:C.tx3, margin:0}}>
+                      Apertura: {fmtDT(activeShift.opened_at)}
+                    </p>
+                  )}
+                </div>
+              </div>
+              <div style={{display:"flex", gap:8}}>
+                {!activeShift ? (
+                  <button onClick={openShift} disabled={shiftBusy}
+                    style={{background:`linear-gradient(135deg,${C.ok},${C.ok}bb)`,
+                      border:"none", borderRadius:10, color:"#0a1f14",
+                      padding:"9px 18px", fontFamily:"'Space Grotesk',sans-serif",
+                      fontWeight:700, fontSize:13, letterSpacing:.3,
+                      boxShadow:`0 0 16px ${C.ok}44`,
+                      display:"flex", alignItems:"center", gap:7}}>
+                    {shiftBusy ? <Spin s={14} c="#0a1f14"/> : "🔓"} Abrir caja
+                  </button>
+                ) : (
+                  <button onClick={closeShift} disabled={shiftBusy}
+                    style={{background:`linear-gradient(135deg,${C.er},${C.er}bb)`,
+                      border:"none", borderRadius:10, color:"#1f0a0a",
+                      padding:"9px 18px", fontFamily:"'Space Grotesk',sans-serif",
+                      fontWeight:700, fontSize:13, letterSpacing:.3,
+                      boxShadow:`0 0 16px ${C.er}44`,
+                      display:"flex", alignItems:"center", gap:7}}>
+                    {shiftBusy ? <Spin s={14} c="#1f0a0a"/> : "🔒"} Cerrar caja
+                  </button>
                 )}
               </div>
             </div>
 
-            {/* stat cards */}
+            {/* ── DATE RANGE FILTER ── */}
+            <div style={{background:C.card, border:`1px solid ${C.br}`,
+              borderRadius:14, padding:"14px 16px", marginBottom:24, boxShadow:C.sh}}>
+              <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                fontWeight:700, color:C.tx3, letterSpacing:1,
+                textTransform:"uppercase", marginBottom:12}}>Rango de consulta</p>
+              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                {[
+                  {label:"Desde", val:histFrom, set:setHistFrom},
+                  {label:"Hasta", val:histTo,   set:setHistTo},
+                ].map(({label,val,set}) => (
+                  <div key={label}>
+                    <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+                      fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
+                      textTransform:"uppercase", marginBottom:6}}>{label}</label>
+                    <input type="datetime-local" value={val} onChange={e=>set(e.target.value)}
+                      style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
+                        borderRadius:9, color:C.tx, padding:"9px 12px",
+                        fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
+                        outline:"none", colorScheme:"dark"}}
+                      onFocus={e=>e.target.style.borderColor=C.v}
+                      onBlur={e=>e.target.style.borderColor=C.br}/>
+                  </div>
+                ))}
+              </div>
+              <div style={{display:"flex", gap:8, marginTop:12, flexWrap:"wrap"}}>
+                <button onClick={()=>{setHistFrom(startOfDayDT());setHistTo(nowLocalDT())}}
+                  style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                    background:C.card2, color:C.tx2,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                  Hoy
+                </button>
+                <button onClick={()=>{
+                  const d=new Date(); d.setDate(d.getDate()-1)
+                  const pad=n=>String(n).padStart(2,"0")
+                  const ymd=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                  setHistFrom(`${ymd}T00:00`); setHistTo(`${ymd}T23:59`)
+                }} style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                    background:C.card2, color:C.tx2,
+                    fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                  Ayer
+                </button>
+                {activeShift && (
+                  <button onClick={()=>{
+                    const d=activeShift.opened_at.toDate()
+                    const pad=n=>String(n).padStart(2,"0")
+                    const fmt=x=>`${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`
+                    setHistFrom(fmt(d)); setHistTo(nowLocalDT())
+                  }} style={{padding:"7px 14px", borderRadius:8,
+                      border:`1px solid ${C.ok}44`, background:C.okbg,
+                      color:C.ok, fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                    Turno actual
+                  </button>
+                )}
+              </div>
+            </div>
             <div style={{display:"grid",
               gridTemplateColumns:"repeat(auto-fit,minmax(140px,1fr))",
               gap:10, marginBottom:24}}>
@@ -1702,48 +1860,71 @@ export default function App() {
             <div style={{maxWidth:680, margin:"0 auto", padding:"24px 16px 40px"}}>
 
               {/* ── HEADER ── */}
-              <div style={{marginBottom:22}}>
+              <div style={{marginBottom:18}}>
                 <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
                   fontSize:22, color:C.tx, margin:"0 0 4px"}}>
                   Productos Vendidos
                 </h2>
                 <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
-                  {ranked.length} productos &middot; {totalUnits} unidades totales
+                  {ranked.length} productos · {totalUnits} unidades totales
                 </p>
               </div>
 
-              {/* ── DATE NAV ── */}
-              <div style={{display:"flex", alignItems:"center", gap:8,
-                background:C.card, border:`1px solid ${C.br}`,
-                borderRadius:14, padding:"7px 10px",
-                boxShadow:C.sh, marginBottom:24,
-                width:"fit-content"}}>
-                <button onClick={()=>goVendDay(-1)}
-                  style={{background:C.vbg, border:`1px solid ${C.br}`,
-                    borderRadius:8, color:C.v, width:32, height:32, fontSize:16,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontWeight:700}}>{"‹"}</button>
-                <input type="date" value={vendDate} onChange={e=>setVendDate(e.target.value)}
-                  style={{background:"transparent", border:"none", color:C.tx,
-                    fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
-                    outline:"none", minWidth:130, textAlign:"center", cursor:"pointer"}}/>
-                <button onClick={()=>goVendDay(1)} disabled={isVendToday}
-                  style={{background:isVendToday?"transparent":C.vbg,
-                    border:`1px solid ${C.br}`, borderRadius:8,
-                    color:isVendToday?C.tx3:C.v, width:32, height:32, fontSize:16,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontWeight:700}}>{"›"}</button>
-                {!isVendToday && (
-                  <button onClick={()=>setVendDate(today())}
-                    style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
-                      border:"none", borderRadius:8, color:"#0f0a1e",
-                      padding:"0 12px", height:32,
-                      fontFamily:"'Space Grotesk',sans-serif",
-                      fontSize:11, fontWeight:700, letterSpacing:.6,
-                      boxShadow:`0 0 12px ${C.v}44`}}>
-                    HOY
+              {/* ── DATE RANGE ── */}
+              <div style={{background:C.card, border:`1px solid ${C.br}`,
+                borderRadius:14, padding:"14px 16px", marginBottom:22, boxShadow:C.sh}}>
+                <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                  fontWeight:700, color:C.tx3, letterSpacing:1,
+                  textTransform:"uppercase", marginBottom:12}}>Rango</p>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                  {[
+                    {label:"Desde", val:vendFrom, set:setVendFrom},
+                    {label:"Hasta", val:vendTo,   set:setVendTo},
+                  ].map(({label,val,set}) => (
+                    <div key={label}>
+                      <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+                        fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
+                        textTransform:"uppercase", marginBottom:6}}>{label}</label>
+                      <input type="datetime-local" value={val} onChange={e=>set(e.target.value)}
+                        style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
+                          borderRadius:9, color:C.tx, padding:"9px 12px",
+                          fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
+                          outline:"none", colorScheme:"dark"}}
+                        onFocus={e=>e.target.style.borderColor=C.v}
+                        onBlur={e=>e.target.style.borderColor=C.br}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex", gap:8, marginTop:12, flexWrap:"wrap"}}>
+                  <button onClick={()=>{setVendFrom(startOfDayDT());setVendTo(nowLocalDT())}}
+                    style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                      background:C.card2, color:C.tx2,
+                      fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                    Hoy
                   </button>
-                )}
+                  <button onClick={()=>{
+                    const d=new Date(); d.setDate(d.getDate()-1)
+                    const pad=n=>String(n).padStart(2,"0")
+                    const ymd=`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+                    setVendFrom(`${ymd}T00:00`); setVendTo(`${ymd}T23:59`)
+                  }} style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                      background:C.card2, color:C.tx2,
+                      fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                    Ayer
+                  </button>
+                  {activeShift && (
+                    <button onClick={()=>{
+                      const d=activeShift.opened_at.toDate()
+                      const pad=n=>String(n).padStart(2,"0")
+                      const fmt=x=>`${x.getFullYear()}-${pad(x.getMonth()+1)}-${pad(x.getDate())}T${pad(x.getHours())}:${pad(x.getMinutes())}`
+                      setVendFrom(fmt(d)); setVendTo(nowLocalDT())
+                    }} style={{padding:"7px 14px", borderRadius:8,
+                        border:`1px solid ${C.ok}44`, background:C.okbg,
+                        color:C.ok, fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                      Turno actual
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* ── CONTENT ── */}
