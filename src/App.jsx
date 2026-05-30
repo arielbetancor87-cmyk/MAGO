@@ -1688,123 +1688,216 @@ export default function App() {
           const ranked = Object.values(grouped).sort((a,b) => b.qty - a.qty)
           const totalUnits = ranked.reduce((s,r) => s+r.qty, 0)
           const maxQty = ranked[0]?.qty || 1
+
+          // Medal chars as JS strings — no HTML entities
+          const medal = (i) => i===0 ? "🥇" : i===1 ? "🥈" : i===2 ? "🥉" : null
+
+          const rankColors = [
+            { bg:`linear-gradient(135deg,${C.am}25,${C.am}10)`, border:`${C.am}44`, text:C.am },
+            { bg:`linear-gradient(135deg,#94a3b822,#94a3b810)`, border:`#94a3b833`,  text:"#94a3b8" },
+            { bg:`linear-gradient(135deg,${C.am}15,${C.am}05)`, border:`${C.am}28`,  text:`${C.am}99` },
+          ]
+
           return (
-            <div style={{maxWidth:720, margin:"0 auto", padding:"24px 16px"}}>
-              <div style={{display:"flex", alignItems:"center",
-                justifyContent:"space-between", marginBottom:24,
-                flexWrap:"wrap", gap:12}}>
-                <div>
-                  <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
-                    fontWeight:700, fontSize:24, color:C.tx, margin:0}}>
-                    Productos Vendidos
-                  </h2>
-                  <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3, margin:0}}>
-                    {ranked.length} productos · {totalUnits} unidades
+            <div style={{maxWidth:680, margin:"0 auto", padding:"24px 16px 40px"}}>
+
+              {/* ── HEADER ── */}
+              <div style={{marginBottom:22}}>
+                <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                  fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                  Productos Vendidos
+                </h2>
+                <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
+                  {ranked.length} productos &middot; {totalUnits} unidades totales
+                </p>
+              </div>
+
+              {/* ── DATE NAV ── */}
+              <div style={{display:"flex", alignItems:"center", gap:8,
+                background:C.card, border:`1px solid ${C.br}`,
+                borderRadius:14, padding:"7px 10px",
+                boxShadow:C.sh, marginBottom:24,
+                width:"fit-content"}}>
+                <button onClick={()=>goVendDay(-1)}
+                  style={{background:C.vbg, border:`1px solid ${C.br}`,
+                    borderRadius:8, color:C.v, width:32, height:32, fontSize:16,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontWeight:700}}>{"‹"}</button>
+                <input type="date" value={vendDate} onChange={e=>setVendDate(e.target.value)}
+                  style={{background:"transparent", border:"none", color:C.tx,
+                    fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:600,
+                    outline:"none", minWidth:130, textAlign:"center", cursor:"pointer"}}/>
+                <button onClick={()=>goVendDay(1)} disabled={isVendToday}
+                  style={{background:isVendToday?"transparent":C.vbg,
+                    border:`1px solid ${C.br}`, borderRadius:8,
+                    color:isVendToday?C.tx3:C.v, width:32, height:32, fontSize:16,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontWeight:700}}>{"›"}</button>
+                {!isVendToday && (
+                  <button onClick={()=>setVendDate(today())}
+                    style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                      border:"none", borderRadius:8, color:"#0f0a1e",
+                      padding:"0 12px", height:32,
+                      fontFamily:"'Space Grotesk',sans-serif",
+                      fontSize:11, fontWeight:700, letterSpacing:.6,
+                      boxShadow:`0 0 12px ${C.v}44`}}>
+                    HOY
+                  </button>
+                )}
+              </div>
+
+              {/* ── CONTENT ── */}
+              {loadV ? (
+                <div style={{display:"flex", justifyContent:"center", padding:80}}>
+                  <Spin s={32}/>
+                </div>
+
+              ) : ranked.length === 0 ? (
+                <div style={{textAlign:"center", padding:"70px 0", color:C.tx3}}>
+                  <div style={{width:76, height:76, background:C.vbg,
+                    border:`1px solid ${C.br}`, borderRadius:22,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:34, margin:"0 auto 18px"}}>📦</div>
+                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif",
+                    fontSize:16, fontWeight:600, color:C.tx2, marginBottom:8}}>
+                    Sin ventas este día
+                  </h3>
+                  <p style={{fontSize:13, color:C.tx3, lineHeight:1.6}}>
+                    No se registraron productos vendidos
                   </p>
                 </div>
-                <div style={{display:"flex", alignItems:"center", gap:6,
-                  background:C.card, border:`1px solid ${C.br}`,
-                  borderRadius:14, padding:"6px 8px", boxShadow:C.sh}}>
-                  <button onClick={()=>goVendDay(-1)}
-                    style={{background:C.vbg, border:`1px solid ${C.br}`, borderRadius:8,
-                      color:C.v, width:32, height:32, fontSize:18,
-                      display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700}}>&#x2039;</button>
-                  <input type="date" value={vendDate} onChange={e=>setVendDate(e.target.value)}
-                    style={{background:"transparent", border:"none", color:C.tx,
-                      fontFamily:"'DM Mono',monospace", fontSize:13, fontWeight:500,
-                      outline:"none", minWidth:126, textAlign:"center"}}/>
-                  <button onClick={()=>goVendDay(1)} disabled={isVendToday}
-                    style={{background:isVendToday?"transparent":C.vbg,
-                      border:`1px solid ${C.br}`, borderRadius:8,
-                      color:isVendToday?C.tx3:C.v, width:32, height:32, fontSize:18,
-                      display:"flex", alignItems:"center", justifyContent:"center", fontWeight:700}}>&#x203a;</button>
-                  {!isVendToday&&(
-                    <button onClick={()=>setVendDate(today())}
-                      style={{background:C.vbg, border:`1px solid ${C.v}44`, borderRadius:8,
-                        color:C.v, padding:"0 12px", height:32,
-                        fontFamily:"'Space Grotesk',sans-serif", fontSize:11, fontWeight:700, letterSpacing:.5}}>
-                      HOY
-                    </button>
-                  )}
-                </div>
-              </div>
-              {loadV ? (
-                <div style={{display:"flex", justifyContent:"center", padding:80}}><Spin s={32}/></div>
-              ) : ranked.length===0 ? (
-                <div style={{textAlign:"center", padding:"60px 0", color:C.tx3}}>
-                  <div style={{width:72, height:72, background:C.vbg, border:`1px solid ${C.br}`,
-                    borderRadius:22, display:"flex", alignItems:"center",
-                    justifyContent:"center", fontSize:32, margin:"0 auto 16px"}}>&#x1F4E6;</div>
-                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:15,
-                    fontWeight:600, color:C.tx2, marginBottom:6}}>Sin ventas este día</h3>
-                  <p style={{fontSize:13, color:C.tx3}}>No se registraron productos vendidos</p>
-                </div>
+
               ) : (
-                <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                <div style={{display:"flex", flexDirection:"column", gap:6}}>
+
                   {ranked.map((item, i) => {
-                    const pct   = (item.qty / maxQty) * 100
-                    const isTop = i===0
+                    const pct    = (item.qty / maxQty) * 100
+                    const isTop  = i === 0
+                    const rk     = rankColors[i] || {bg:C.vbg, border:C.br, text:C.v}
+                    const m      = medal(i)
+
+                    // progress bar color
+                    const barColor = i === 0
+                      ? `linear-gradient(90deg,${C.v},${C.vm})`
+                      : i === 1
+                      ? `linear-gradient(90deg,${C.v}99,${C.v}55)`
+                      : `linear-gradient(90deg,${C.v}66,${C.v}33)`
+
                     return (
-                      <div key={item.name}
-                        style={{background:C.card,
-                          border:`1px solid ${isTop?C.v+"66":C.br}`,
-                          borderRadius:14, padding:"16px 18px",
-                          boxShadow:isTop?`0 0 20px ${C.v}18`:C.sh,
-                          position:"relative", overflow:"hidden"}}>
-                        <div style={{position:"absolute", left:0, top:0, bottom:0,
+                      <div key={item.name} style={{
+                        background: isTop
+                          ? `linear-gradient(135deg,${C.card},${C.v}0a)`
+                          : C.card,
+                        border:`1px solid ${isTop ? C.v+"55" : C.br}`,
+                        borderRadius:16,
+                        padding:"14px 16px",
+                        boxShadow: isTop ? `0 0 28px ${C.v}18, ${C.sh}` : C.sh,
+                        position:"relative", overflow:"hidden",
+                        transition:"border-color .2s"}}>
+
+                        {/* glow fill proportional */}
+                        <div style={{
+                          position:"absolute", left:0, top:0, bottom:0,
                           width:`${pct}%`, pointerEvents:"none",
-                          background:`linear-gradient(90deg,${C.v}08,transparent)`,
-                          borderRadius:"14px 0 0 14px"}}/>
-                        <div style={{position:"relative", display:"flex", alignItems:"center", gap:14}}>
-                          <div style={{width:38, height:38, flexShrink:0, borderRadius:10,
+                          background:`linear-gradient(90deg,${C.v}0a 0%,transparent 100%)`,
+                          borderRadius:"16px 0 0 16px"
+                        }}/>
+
+                        <div style={{position:"relative", display:"flex",
+                          alignItems:"center", gap:12}}>
+
+                          {/* rank badge */}
+                          <div style={{
+                            width:40, height:40, flexShrink:0,
+                            borderRadius:12,
+                            background: rk.bg,
+                            border:`1px solid ${rk.border}`,
                             display:"flex", alignItems:"center", justifyContent:"center",
-                            fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
-                            fontSize:i<3?18:13,
-                            background:i===0?`linear-gradient(135deg,${C.am}33,${C.gold}22)`:C.vbg,
-                            color:i===0?C.am:i===1?C.tx2:i===2?C.am+"bb":C.v,
-                            border:`1px solid ${i===0?C.am+"44":C.br}`}}>
-                            {i===0?"&#x1F947;":i===1?"&#x1F948;":i===2?"&#x1F949;":`#${i+1}`}
+                            fontSize: m ? 20 : 12,
+                            fontFamily:"'Space Grotesk',sans-serif",
+                            fontWeight:700, color:rk.text,
+                          }}>
+                            {m || `#${i+1}`}
                           </div>
+
+                          {/* info */}
                           <div style={{flex:1, minWidth:0}}>
-                            <div style={{display:"flex", alignItems:"center",
-                              justifyContent:"space-between", marginBottom:7, gap:8}}>
-                              <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:15,
-                                fontWeight:600, color:C.tx,
-                                whiteSpace:"nowrap", overflow:"hidden", textOverflow:"ellipsis"}}>
+                            <div style={{display:"flex", alignItems:"baseline",
+                              justifyContent:"space-between", gap:8, marginBottom:8}}>
+
+                              <span style={{
+                                fontFamily:"'DM Sans',sans-serif",
+                                fontSize:14, fontWeight:600,
+                                color: isTop ? C.tx : C.tx,
+                                overflow:"hidden", textOverflow:"ellipsis",
+                                whiteSpace:"nowrap", flex:1,
+                              }}>
                                 {item.name}
                               </span>
-                              <span style={{fontFamily:"'Space Grotesk',monospace",
-                                fontSize:20, fontWeight:700, letterSpacing:-1,
-                                color:isTop?C.v:C.tx, flexShrink:0}}>
+
+                              <span style={{
+                                fontFamily:"'Space Grotesk',sans-serif",
+                                fontSize:22, fontWeight:700, letterSpacing:-1,
+                                color: isTop ? C.v : C.tx,
+                                flexShrink:0, lineHeight:1,
+                              }}>
                                 {item.qty}
-                                <span style={{fontFamily:"'DM Sans',sans-serif",
-                                  fontSize:11, fontWeight:500, color:C.tx3,
-                                  marginLeft:4, letterSpacing:0}}>uds.</span>
+                                <span style={{
+                                  fontFamily:"'DM Sans',sans-serif",
+                                  fontSize:11, fontWeight:400,
+                                  color:C.tx3, marginLeft:3, letterSpacing:0,
+                                }}>uds</span>
                               </span>
                             </div>
-                            <div style={{height:5, background:C.card2, borderRadius:4, overflow:"hidden"}}>
-                              <div style={{height:"100%", width:`${pct}%`, borderRadius:4,
-                                background:isTop
-                                  ?`linear-gradient(90deg,${C.v},${C.vm})`
-                                  :`linear-gradient(90deg,${C.v}88,${C.v}44)`}}/>
+
+                            {/* progress bar */}
+                            <div style={{height:4, background:`${C.br}88`,
+                              borderRadius:4, overflow:"hidden"}}>
+                              <div style={{
+                                height:"100%",
+                                width:`${pct}%`,
+                                background: barColor,
+                                borderRadius:4,
+                                boxShadow: isTop ? `0 0 8px ${C.v}88` : "none",
+                              }}/>
                             </div>
                           </div>
                         </div>
                       </div>
                     )
                   })}
-                  <div style={{background:C.card2, border:`1px solid ${C.br}`,
-                    borderRadius:14, padding:"14px 20px", marginTop:4,
-                    display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-                    <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:12,
-                      fontWeight:600, color:C.tx3, letterSpacing:.8, textTransform:"uppercase"}}>
-                      Total unidades vendidas
-                    </span>
-                    <span style={{fontFamily:"'Space Grotesk',monospace",
-                      fontSize:24, fontWeight:700, color:C.v, letterSpacing:-1}}>
-                      {totalUnits}
-                    </span>
+
+                  {/* ── TOTAL ROW ── */}
+                  <div style={{
+                    marginTop:8,
+                    background:`linear-gradient(135deg,${C.v}10,${C.vm}06)`,
+                    border:`1px solid ${C.v}33`,
+                    borderRadius:16, padding:"16px 20px",
+                    display:"flex", justifyContent:"space-between", alignItems:"center",
+                    boxShadow:`0 0 20px ${C.v}10`,
+                  }}>
+                    <div>
+                      <p style={{fontFamily:"'Space Grotesk',sans-serif",
+                        fontSize:11, fontWeight:700, color:C.tx3,
+                        letterSpacing:1, textTransform:"uppercase", marginBottom:2}}>
+                        Total del día
+                      </p>
+                      <p style={{fontFamily:"'DM Sans',sans-serif",
+                        fontSize:12, color:C.tx3}}>
+                        {ranked.length} productos distintos
+                      </p>
+                    </div>
+                    <div style={{textAlign:"right"}}>
+                      <span style={{fontFamily:"'Space Grotesk',sans-serif",
+                        fontSize:32, fontWeight:700, color:C.v, letterSpacing:-1,
+                        display:"block", lineHeight:1}}>
+                        {totalUnits}
+                      </span>
+                      <span style={{fontFamily:"'DM Sans',sans-serif",
+                        fontSize:11, color:C.tx3}}>unidades vendidas</span>
+                    </div>
                   </div>
+
                 </div>
               )}
             </div>
