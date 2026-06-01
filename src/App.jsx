@@ -1,8 +1,7 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from "react"
+import { useState, useEffect, useRef } from "react"
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, query, where, Timestamp, setDoc, getDoc,
-  onSnapshot, orderBy
+  doc, getDocs, query, where, Timestamp, setDoc, getDoc
 } from "firebase/firestore"
 import {
   onAuthStateChanged, signOut,
@@ -1093,34 +1092,17 @@ export default function App() {
     setActiveShift(null)
   }
 
-  const loadProdsFromCol = null // replaced by onSnapshot below
-
-  // ── Real-time product listeners — updates appear instantly ──────────────
   useEffect(() => {
     if (!user || isAdmin) return
     setLoadP(true)
-    let resolved = 0
-    const done = () => { if (++resolved === 2) setLoadP(false) }
-
-    const sortByDate = docs => docs.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
-
-    const unsubRetail = onSnapshot(
-      prodsCol,
-      snap => {
-        setProds(sortByDate(snap.docs.map(d => ({id:d.id, ...d.data()}))))
-        done()
-      },
-      err => { console.warn("retail snap:", err); done() }
-    )
-    const unsubMayor = onSnapshot(
-      mayorCol,
-      snap => {
-        setMayorProds(sortByDate(snap.docs.map(d => ({id:d.id, ...d.data()}))))
-        done()
-      },
-      err => { console.warn("mayor snap:", err); done() }
-    )
-    return () => { unsubRetail(); unsubMayor() }
+    const sort = list => list.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
+    Promise.all([
+      getDocs(prodsCol).then(s => sort(s.docs.map(d=>({id:d.id,...d.data()})))),
+      getDocs(mayorCol).then(s => sort(s.docs.map(d=>({id:d.id,...d.data()})))),
+    ]).then(([retail, mayor]) => {
+      setProds(retail)
+      setMayorProds(mayor)
+    }).catch(console.warn).finally(() => setLoadP(false))
   }, [user])
 
   // Shared query by Timestamp range
@@ -1171,32 +1153,22 @@ export default function App() {
   const cartFinal      = cartTotal - discountAmt
   const cartQty        = cart.reduce((s,i) => s + i.qty, 0)
 
-  // Debounced search — avoids re-filtering on every keystroke
-  const [debouncedSearch, setDebouncedSearch] = useState(search)
-  useEffect(() => {
-    const t = setTimeout(() => setDebouncedSearch(search), 120)
-    return () => clearTimeout(t)
-  }, [search])
+  const filteredProds = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
-  const filteredProds = useMemo(() =>
-    activeProds.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase())),
-    [activeProds, debouncedSearch]
-  )
-
-  const addItem = useCallback(p => {
+  const addItem = p => {
     setCart(prev => {
       const ex = prev.find(i => i.id===p.id)
       return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
     })
     toast(`${p.name} agregado`)
-  }, [toast])
+  }
 
-  const setQty = useCallback((id,q) => setCart(prev =>
+  const setQty = (id,q) => setCart(prev =>
     q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
-  ), [])
+  )
 
   /* save product — optimistic + real-time listener updates UI automatically */
-  const saveProd = useCallback(p => {
+  const saveProd = p => {
     if (!user || !activeCol) return
     const img     = p.img || FALLBACK
     const colPath = lista === "mayorista"
@@ -1204,20 +1176,18 @@ export default function App() {
       : `users/${user.uid}/products`
 
     if (p.id) {
-      // Optimistic update — onSnapshot will confirm
       setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img} : x))
       setProdModal(null); toast(`"${p.name}" actualizado`)
       updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img}).catch(console.warn)
     } else {
       const tmp = uid()
-      // Optimistic insert — onSnapshot replaces tmp with real id
       setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, created_at:{seconds:Date.now()/1000}}])
       setProdModal(null); toast(`"${p.name}" agregado`)
       addDoc(activeCol, {name:p.name, price:p.price, img, created_at:Timestamp.now()})
         .then(r => setActiveProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
         .catch(console.warn)
     }
-  }, [user, activeCol, lista, toast])
+  }
 
   /* delete — optimistic */
   const delProd = id => {
@@ -1269,33 +1239,29 @@ export default function App() {
   }
 
   /* stats */
-  const st = useMemo(() => ({
+  const st = {
     total: sales.reduce((s,v) => s+v.total, 0),
     ef:    sales.reduce((s,v) => s+(v.cash_paid||0), 0),
     mp:    sales.reduce((s,v) => s+(v.mp_paid||0), 0),
     items: sales.reduce((s,v) => s+(v.items||[]).reduce((a,i)=>a+i.qty,0), 0),
     count: sales.length,
     mayor: sales.filter(v=>v.lista==="mayorista").reduce((s,v)=>s+v.total,0),
-  }), [sales])
-  const mLabel = useCallback(s => {
+  }
+  const mLabel = s => {
     if (s.method==="efectivo")      return {l:"● Efectivo", c:C.ok, bg:C.okbg}
     if (s.method==="transferencia") return {l:"● Transfer", c:C.bl, bg:C.blbg}
     return {l:"● Mixto", c:C.am, bg:C.ambg}
-  }, [])
+  }
 
-  // Memoized vendidos ranking — only recalculates when vendSales changes
-  const vendRanked = useMemo(() => {
-    const grouped = {}
-    vendSales.forEach(sale => {
-      ;(sale.items||[]).forEach(it => {
-        if (!grouped[it.product_name]) grouped[it.product_name] = {name:it.product_name, qty:0}
-        grouped[it.product_name].qty += it.qty
-      })
+  const _vendGrouped = {}
+  vendSales.forEach(sale => {
+    ;(sale.items||[]).forEach(it => {
+      if (!_vendGrouped[it.product_name]) _vendGrouped[it.product_name] = {name:it.product_name, qty:0}
+      _vendGrouped[it.product_name].qty += it.qty
     })
-    return Object.values(grouped).sort((a,b) => b.qty - a.qty)
-  }, [vendSales])
-
-  const vendTotalUnits = useMemo(() => vendRanked.reduce((s,r) => s+r.qty, 0), [vendRanked])
+  })
+  const vendRanked = Object.values(_vendGrouped).sort((a,b) => b.qty - a.qty)
+  const vendTotalUnits = vendRanked.reduce((s,r) => s+r.qty, 0)
   // Shift functions
   const shiftsCol = user ? collection(db, `users/${user.uid}/shifts`) : null
 
@@ -2031,7 +1997,6 @@ export default function App() {
 
         {/* ── PRODUCTOS VENDIDOS ── */}
         {tab==="vendidos" && (() => {
-          const grouped = vendRanked.reduce((acc,r) => ({...acc,[r.name]:r}), {})
           const ranked = vendRanked
           const totalUnits = vendTotalUnits
           const maxQty = ranked[0]?.qty || 1
