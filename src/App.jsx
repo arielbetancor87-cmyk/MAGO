@@ -1148,10 +1148,13 @@ export default function App() {
   }, [user])
 
   /* cart */
-  const cartTotal      = cart.reduce((s,i) => s + i.price*i.qty, 0)
-  const discountAmt    = Math.min(Math.max(parseFloat(discount)||0, 0), cartTotal)
-  const cartFinal      = cartTotal - discountAmt
-  const cartQty        = cart.reduce((s,i) => s + i.qty, 0)
+  const [delSaleModal, setDelSaleModal] = useState(null)
+  const [discount,     setDiscount]     = useState("")
+
+  const cartTotal   = cart.reduce((s,i) => s + i.price*i.qty, 0)
+  const discountAmt = Math.min(Math.max(parseFloat(discount)||0, 0), cartTotal)
+  const cartFinal   = cartTotal - discountAmt
+  const cartQty     = cart.reduce((s,i) => s + i.qty, 0)
 
   const filteredProds = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
@@ -1200,9 +1203,6 @@ export default function App() {
       : `users/${user.uid}/products`
     if (!id.startsWith("_")) deleteDoc(doc(db, colPath, id)).catch(console.warn)
   }
-
-  const [delSaleModal, setDelSaleModal] = useState(null) // sale object to delete
-  const [discount,     setDiscount]     = useState("")   // manual discount amount
 
   const delSale = id => {
     if (!user) return
@@ -1253,15 +1253,6 @@ export default function App() {
     return {l:"● Mixto", c:C.am, bg:C.ambg}
   }
 
-  const _vendGrouped = {}
-  vendSales.forEach(sale => {
-    ;(sale.items||[]).forEach(it => {
-      if (!_vendGrouped[it.product_name]) _vendGrouped[it.product_name] = {name:it.product_name, qty:0}
-      _vendGrouped[it.product_name].qty += it.qty
-    })
-  })
-  const vendRanked = Object.values(_vendGrouped).sort((a,b) => b.qty - a.qty)
-  const vendTotalUnits = vendRanked.reduce((s,r) => s+r.qty, 0)
   // Shift functions
   const shiftsCol = user ? collection(db, `users/${user.uid}/shifts`) : null
 
@@ -1997,8 +1988,15 @@ export default function App() {
 
         {/* ── PRODUCTOS VENDIDOS ── */}
         {tab==="vendidos" && (() => {
-          const ranked = vendRanked
-          const totalUnits = vendTotalUnits
+          const _vg = {}
+          vendSales.forEach(sale => {
+            ;(sale.items||[]).forEach(it => {
+              if (!_vg[it.product_name]) _vg[it.product_name] = {name:it.product_name, qty:0}
+              _vg[it.product_name].qty += it.qty
+            })
+          })
+          const ranked = Object.values(_vg).sort((a,b) => b.qty - a.qty)
+          const totalUnits = ranked.reduce((s,r) => s+r.qty, 0)
           const maxQty = ranked[0]?.qty || 1
 
           // Medal chars as JS strings — no HTML entities
