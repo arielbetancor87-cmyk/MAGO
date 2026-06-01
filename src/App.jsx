@@ -1030,6 +1030,8 @@ export default function App() {
   const [userStatus, setUserStatus] = useState(null)
   const [tab,        setTab]        = useState("caja")
   const [prods,      setProds]      = useState([])
+  const [mayorProds, setMayorProds] = useState([])
+  const [lista,      setLista]      = useState("minorista") // "minorista" | "mayorista"
   const [cart,       setCart]       = useState([])
   const [sales,      setSales]      = useState([])
   const [histFrom,   setHistFrom]   = useState(startOfDayDT)
@@ -1076,9 +1078,13 @@ export default function App() {
     })
   }, [])
 
-  const isAdmin     = isAdminEmail(user?.email)
-  const prodsCol    = user ? collection(db, `users/${user.uid}/products`) : null
-  const salesCol    = user ? collection(db, `users/${user.uid}/sales`)    : null
+  const isAdmin      = isAdminEmail(user?.email)
+  const prodsCol     = user ? collection(db, `users/${user.uid}/products`)          : null
+  const mayorCol     = user ? collection(db, `users/${user.uid}/products_mayorista`) : null
+  const salesCol     = user ? collection(db, `users/${user.uid}/sales`)              : null
+  const activeCol    = lista === "mayorista" ? mayorCol : prodsCol
+  const activeProds  = lista === "mayorista" ? mayorProds : prods
+  const setActiveProds = lista === "mayorista" ? setMayorProds : setProds
 
   const handleLogout = async () => {
     await signOut(auth)
@@ -1086,15 +1092,27 @@ export default function App() {
     setActiveShift(null)
   }
 
+  const loadProdsFromCol = (col, setter) => {
+    if (!col) return
+    getDocs(col).then(s => {
+      const list = s.docs.map(d => ({id:d.id, ...d.data()}))
+      list.sort((a,b) => (a.created_at?.seconds||0) - (b.created_at?.seconds||0))
+      setter(list)
+    }).catch(console.warn)
+  }
+
   useEffect(() => {
-    if (!user || !prodsCol || isAdmin) return
+    if (!user || isAdmin) return
     setLoadP(true)
-    getDocs(prodsCol)
-      .then(s => {
-        const list = s.docs.map(d => ({id:d.id, ...d.data()}))
-        list.sort((a,b) => (a.created_at?.seconds||0) - (b.created_at?.seconds||0))
-        setProds(list)
-      }).catch(console.warn).finally(() => setLoadP(false))
+    Promise.all([
+      getDocs(prodsCol).then(s => s.docs.map(d=>({id:d.id,...d.data()}))),
+      getDocs(mayorCol).then(s => s.docs.map(d=>({id:d.id,...d.data()}))),
+    ]).then(([retail, mayor]) => {
+      retail.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
+      mayor.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
+      setProds(retail)
+      setMayorProds(mayor)
+    }).catch(console.warn).finally(() => setLoadP(false))
   }, [user])
 
   // Shared query by Timestamp range
@@ -1142,7 +1160,7 @@ export default function App() {
   /* cart */
   const cartTotal      = cart.reduce((s,i) => s + i.price*i.qty, 0)
   const cartQty        = cart.reduce((s,i) => s + i.qty, 0)
-  const filteredProds  = prods.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+  const filteredProds  = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
   const addItem = p => {
     setCart(prev => {
@@ -1157,18 +1175,18 @@ export default function App() {
 
   /* save product — optimistic */
   const saveProd = p => {
-    if (!user || !prodsCol) return
+    if (!user || !activeCol) return
     const img = p.img || FALLBACK
     if (p.id) {
-      setProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img} : x))
+      setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img} : x))
       setProdModal(null); toast(`"${p.name}" actualizado`)
-      updateDoc(doc(db,`users/${user.uid}/products`,p.id), {name:p.name,price:p.price,img}).catch(console.warn)
+      updateDoc(doc(db, activeCol.path, p.id), {name:p.name,price:p.price,img}).catch(console.warn)
     } else {
       const tmp = uid()
-      setProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, created_at:{seconds:Date.now()/1000}}])
+      setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, created_at:{seconds:Date.now()/1000}}])
       setProdModal(null); toast(`"${p.name}" agregado`)
-      addDoc(prodsCol, {name:p.name, price:p.price, img, created_at:Timestamp.now()})
-        .then(r => setProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
+      addDoc(activeCol, {name:p.name, price:p.price, img, created_at:Timestamp.now()})
+        .then(r => setActiveProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
         .catch(console.warn)
     }
   }
@@ -1176,10 +1194,22 @@ export default function App() {
   /* delete — optimistic */
   const delProd = id => {
     if (!user) return
-    setProds(prev => prev.filter(p => p.id!==id))
+    setActiveProds(prev => prev.filter(p => p.id!==id))
     setCart(prev  => prev.filter(i => i.id!==id))
     setDelModal(null); toast("Producto eliminado")
-    if (!id.startsWith("_")) deleteDoc(doc(db,`users/${user.uid}/products`,id)).catch(console.warn)
+    const colPath = lista === "mayorista"
+      ? `users/${user.uid}/products_mayorista`
+      : `users/${user.uid}/products`
+    if (!id.startsWith("_")) deleteDoc(doc(db, colPath, id)).catch(console.warn)
+  }
+
+  const [delSaleModal, setDelSaleModal] = useState(null) // sale object to delete
+
+  const delSale = id => {
+    if (!user) return
+    setSales(prev => prev.filter(s => s.id!==id))
+    setDelSaleModal(null); toast("Venta eliminada")
+    if (!id.startsWith("_")) deleteDoc(doc(db,`users/${user.uid}/sales`,id)).catch(console.warn)
   }
 
   /* pay — optimistic */
@@ -1188,6 +1218,7 @@ export default function App() {
     const td = today()
     const sale = {
       id:uid(), date:td, total:cartTotal,
+      lista: lista,
       method:info.mode, cash_paid:info.cashPaid||0,
       mp_paid:info.mpPaid||0, change_amount:info.change||0,
       items:cart.map(i => ({product_name:i.name, product_price:i.price, qty:i.qty})),
@@ -1296,12 +1327,12 @@ export default function App() {
     <div style={{padding:"18px 16px"}}>
       {/* header */}
       <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
-        marginBottom:14, gap:8}}>
+        marginBottom:12, gap:8}}>
         <div>
           <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
             fontSize:18, color:C.tx, margin:0}}>Productos</h2>
           <p style={{fontSize:12, color:C.tx3, margin:0,
-            fontFamily:"'DM Mono',monospace"}}>{prods.length} artículos</p>
+            fontFamily:"'DM Mono',monospace"}}>{activeProds.length} artículos</p>
         </div>
         <button onClick={() => setProdModal({p:null})}
           style={{background:`linear-gradient(135deg,${C.v},${C.vm})`, color:"#0f0a1e",
@@ -1311,6 +1342,37 @@ export default function App() {
             display:"flex", alignItems:"center", gap:6, flexShrink:0}}>
           <span style={{fontSize:18, lineHeight:1}}>+</span> Agregar
         </button>
+      </div>
+
+      {/* lista switcher */}
+      <div style={{display:"flex", background:C.card, border:`1px solid ${C.br}`,
+        borderRadius:12, padding:4, marginBottom:14, gap:4}}>
+        {[
+          {k:"minorista", label:"🏷️ Lista Minorista"},
+          {k:"mayorista", label:"📦 Lista Mayorista"},
+        ].map(({k, label}) => (
+          <button key={k} onClick={() => { setLista(k); setCart([]) }}
+            style={{flex:1, padding:"9px 0", borderRadius:9, border:"none",
+              background: lista===k
+                ? k==="mayorista"
+                  ? `linear-gradient(135deg,${C.am}33,${C.am}18)`
+                  : `linear-gradient(135deg,${C.v}33,${C.v}18)`
+                : "transparent",
+              color: lista===k
+                ? k==="mayorista" ? C.am : C.v
+                : C.tx3,
+              fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:13,
+              letterSpacing:.3, transition:"all .18s",
+              boxShadow: lista===k
+                ? `0 0 12px ${k==="mayorista" ? C.am : C.v}22`
+                : "none",
+              border: lista===k
+                ? `1px solid ${k==="mayorista" ? C.am : C.v}44`
+                : "1px solid transparent",
+            }}>
+            {label}
+          </button>
+        ))}
       </div>
 
       {/* search */}
@@ -1342,7 +1404,7 @@ export default function App() {
           <p style={{fontFamily:"'Space Grotesk',sans-serif",
             fontSize:14, fontWeight:600, color:C.tx2}}>Sin resultados para "{search}"</p>
         </div>
-      ) : prods.length===0 && !search ? (
+      ) : activeProds.length===0 && !search ? (
         <div style={{textAlign:"center", padding:"50px 20px", color:C.tx3}}>
           <div style={{width:72, height:72, background:C.vbg,
             border:`1px solid ${C.br}`, borderRadius:22,
@@ -1415,16 +1477,23 @@ export default function App() {
       {/* header */}
       <div style={{padding:"14px 16px 10px", borderBottom:`1px solid ${C.br}`,
         display:"flex", justifyContent:"space-between", alignItems:"center"}}>
-        <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
-          fontSize:15, color:C.tx, margin:0,
-          display:"flex", alignItems:"center", gap:8}}>
-          Carrito
-          {cartQty > 0 && (
-            <span style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
-              color:"#0f0a1e", borderRadius:20, padding:"2px 9px",
-              fontSize:12, fontWeight:700}}>{cartQty}</span>
-          )}
-        </h3>
+        <div style={{display:"flex", flexDirection:"column", gap:3}}>
+          <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+            fontSize:15, color:C.tx, margin:0,
+            display:"flex", alignItems:"center", gap:8}}>
+            Carrito
+            {cartQty > 0 && (
+              <span style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                color:"#0f0a1e", borderRadius:20, padding:"2px 9px",
+                fontSize:12, fontWeight:700}}>{cartQty}</span>
+            )}
+          </h3>
+          <span style={{fontSize:10, fontWeight:700, letterSpacing:.8,
+            fontFamily:"'Space Grotesk',sans-serif", textTransform:"uppercase",
+            color: lista==="mayorista" ? C.am : C.v}}>
+            {lista==="mayorista" ? "📦 Mayorista" : "🏷️ Minorista"}
+          </span>
+        </div>
         {cart.length > 0 && (
           <button onClick={() => setCart([])}
             style={{background:C.erbg, border:`1px solid ${C.er}33`,
@@ -1789,11 +1858,25 @@ export default function App() {
                             padding:"3px 10px", borderRadius:20,
                             background:m.bg, color:m.c,
                             border:`1px solid ${m.c}33`}}>{m.l}</span>
+                          {s.lista==="mayorista" && (
+                            <span style={{fontFamily:"'Space Grotesk',sans-serif",
+                              fontSize:10, fontWeight:700, letterSpacing:.6,
+                              padding:"3px 9px", borderRadius:20,
+                              background:C.ambg, color:C.am,
+                              border:`1px solid ${C.am}33`}}>📦 MAY</span>
+                          )}
                         </div>
-                        <span style={{fontFamily:"'Space Grotesk',monospace",
-                          fontWeight:700, fontSize:18, color:C.tx, letterSpacing:-1}}>
-                          {$(s.total)}
-                        </span>
+                        <div style={{display:"flex", alignItems:"center", gap:8}}>
+                          <span style={{fontFamily:"'Space Grotesk',monospace",
+                            fontWeight:700, fontSize:18, color:C.tx, letterSpacing:-1}}>
+                            {$(s.total)}
+                          </span>
+                          <button onClick={()=>setDelSaleModal(s)}
+                            style={{background:C.erbg, border:`1px solid ${C.er}33`,
+                              borderRadius:8, color:C.er, width:30, height:30,
+                              display:"flex", alignItems:"center", justifyContent:"center",
+                              fontSize:13, flexShrink:0}}>🗑️</button>
+                        </div>
                       </div>
                       <p style={{fontSize:13, color:C.tx2, lineHeight:1.5,
                         fontFamily:"'DM Sans',sans-serif",
@@ -2089,6 +2172,13 @@ export default function App() {
       {prodModal && <ProductModal p={prodModal.p} onClose={()=>setProdModal(null)} onSave={saveProd}/>}
       {payModal  && <PayModal total={cartTotal} onClose={()=>setPayModal(false)} onPay={paySale}/>}
       {delModal  && <Del name={delModal.name} onYes={()=>delProd(delModal.id)} onNo={()=>setDelModal(null)}/>}
+      {delSaleModal && (
+        <Del
+          name={`Venta #${sales.indexOf(delSaleModal)+1 > 0 ? sales.length - sales.indexOf(delSaleModal) : ""} — ${$(delSaleModal.total)}`}
+          onYes={()=>delSale(delSaleModal.id)}
+          onNo={()=>setDelSaleModal(null)}
+        />
+      )}
       {toastEl}
     </>
   )
