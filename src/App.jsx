@@ -2,7 +2,7 @@ import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import {
   collection, addDoc, updateDoc, deleteDoc,
   doc, getDocs, query, where, Timestamp, setDoc, getDoc,
-  onSnapshot, orderBy, enableMultiTabIndexedDbPersistence
+  onSnapshot, orderBy
 } from "firebase/firestore"
 import {
   onAuthStateChanged, signOut,
@@ -1102,18 +1102,20 @@ export default function App() {
     let resolved = 0
     const done = () => { if (++resolved === 2) setLoadP(false) }
 
+    const sortByDate = docs => docs.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
+
     const unsubRetail = onSnapshot(
-      query(prodsCol, orderBy("created_at", "asc")),
+      prodsCol,
       snap => {
-        setProds(snap.docs.map(d => ({id:d.id, ...d.data()})))
+        setProds(sortByDate(snap.docs.map(d => ({id:d.id, ...d.data()}))))
         done()
       },
       err => { console.warn("retail snap:", err); done() }
     )
     const unsubMayor = onSnapshot(
-      query(mayorCol, orderBy("created_at", "asc")),
+      mayorCol,
       snap => {
-        setMayorProds(snap.docs.map(d => ({id:d.id, ...d.data()})))
+        setMayorProds(sortByDate(snap.docs.map(d => ({id:d.id, ...d.data()}))))
         done()
       },
       err => { console.warn("mayor snap:", err); done() }
