@@ -1,7 +1,8 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo, useCallback } from "react"
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, query, where, Timestamp, setDoc, getDoc
+  doc, getDocs, query, where, Timestamp, setDoc, getDoc,
+  onSnapshot, orderBy, enableMultiTabIndexedDbPersistence
 } from "firebase/firestore"
 import {
   onAuthStateChanged, signOut,
@@ -1092,27 +1093,32 @@ export default function App() {
     setActiveShift(null)
   }
 
-  const loadProdsFromCol = (col, setter) => {
-    if (!col) return
-    getDocs(col).then(s => {
-      const list = s.docs.map(d => ({id:d.id, ...d.data()}))
-      list.sort((a,b) => (a.created_at?.seconds||0) - (b.created_at?.seconds||0))
-      setter(list)
-    }).catch(console.warn)
-  }
+  const loadProdsFromCol = null // replaced by onSnapshot below
 
+  // ── Real-time product listeners — updates appear instantly ──────────────
   useEffect(() => {
     if (!user || isAdmin) return
     setLoadP(true)
-    Promise.all([
-      getDocs(prodsCol).then(s => s.docs.map(d=>({id:d.id,...d.data()}))),
-      getDocs(mayorCol).then(s => s.docs.map(d=>({id:d.id,...d.data()}))),
-    ]).then(([retail, mayor]) => {
-      retail.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
-      mayor.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
-      setProds(retail)
-      setMayorProds(mayor)
-    }).catch(console.warn).finally(() => setLoadP(false))
+    let resolved = 0
+    const done = () => { if (++resolved === 2) setLoadP(false) }
+
+    const unsubRetail = onSnapshot(
+      query(prodsCol, orderBy("created_at", "asc")),
+      snap => {
+        setProds(snap.docs.map(d => ({id:d.id, ...d.data()})))
+        done()
+      },
+      err => { console.warn("retail snap:", err); done() }
+    )
+    const unsubMayor = onSnapshot(
+      query(mayorCol, orderBy("created_at", "asc")),
+      snap => {
+        setMayorProds(snap.docs.map(d => ({id:d.id, ...d.data()})))
+        done()
+      },
+      err => { console.warn("mayor snap:", err); done() }
+    )
+    return () => { unsubRetail(); unsubMayor() }
   }, [user])
 
   // Shared query by Timestamp range
@@ -1159,37 +1165,57 @@ export default function App() {
 
   /* cart */
   const cartTotal      = cart.reduce((s,i) => s + i.price*i.qty, 0)
+  const discountAmt    = Math.min(Math.max(parseFloat(discount)||0, 0), cartTotal)
+  const cartFinal      = cartTotal - discountAmt
   const cartQty        = cart.reduce((s,i) => s + i.qty, 0)
-  const filteredProds  = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
-  const addItem = p => {
+  // Debounced search — avoids re-filtering on every keystroke
+  const [debouncedSearch, setDebouncedSearch] = useState(search)
+  useEffect(() => {
+    const t = setTimeout(() => setDebouncedSearch(search), 120)
+    return () => clearTimeout(t)
+  }, [search])
+
+  const filteredProds = useMemo(() =>
+    activeProds.filter(p => p.name.toLowerCase().includes(debouncedSearch.toLowerCase())),
+    [activeProds, debouncedSearch]
+  )
+
+  const addItem = useCallback(p => {
     setCart(prev => {
       const ex = prev.find(i => i.id===p.id)
       return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
     })
     toast(`${p.name} agregado`)
-  }
-  const setQty = (id,q) => setCart(prev =>
-    q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
-  )
+  }, [toast])
 
-  /* save product — optimistic */
-  const saveProd = p => {
+  const setQty = useCallback((id,q) => setCart(prev =>
+    q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
+  ), [])
+
+  /* save product — optimistic + real-time listener updates UI automatically */
+  const saveProd = useCallback(p => {
     if (!user || !activeCol) return
-    const img = p.img || FALLBACK
+    const img     = p.img || FALLBACK
+    const colPath = lista === "mayorista"
+      ? `users/${user.uid}/products_mayorista`
+      : `users/${user.uid}/products`
+
     if (p.id) {
+      // Optimistic update — onSnapshot will confirm
       setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img} : x))
       setProdModal(null); toast(`"${p.name}" actualizado`)
-      updateDoc(doc(db, activeCol.path, p.id), {name:p.name,price:p.price,img}).catch(console.warn)
+      updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img}).catch(console.warn)
     } else {
       const tmp = uid()
+      // Optimistic insert — onSnapshot replaces tmp with real id
       setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, created_at:{seconds:Date.now()/1000}}])
       setProdModal(null); toast(`"${p.name}" agregado`)
       addDoc(activeCol, {name:p.name, price:p.price, img, created_at:Timestamp.now()})
         .then(r => setActiveProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
         .catch(console.warn)
     }
-  }
+  }, [user, activeCol, lista, toast])
 
   /* delete — optimistic */
   const delProd = id => {
@@ -1204,6 +1230,7 @@ export default function App() {
   }
 
   const [delSaleModal, setDelSaleModal] = useState(null) // sale object to delete
+  const [discount,     setDiscount]     = useState("")   // manual discount amount
 
   const delSale = id => {
     if (!user) return
@@ -1217,7 +1244,8 @@ export default function App() {
     if (!user || !salesCol) return
     const td = today()
     const sale = {
-      id:uid(), date:td, total:cartTotal,
+      id:uid(), date:td, total:cartFinal,
+      discount: discountAmt,
       lista: lista,
       method:info.mode, cash_paid:info.cashPaid||0,
       mp_paid:info.mpPaid||0, change_amount:info.change||0,
@@ -1229,7 +1257,7 @@ export default function App() {
     const fromMs = new Date(histFrom).getTime()
     const toMs   = new Date(histTo).getTime()
     if (saleTs >= fromMs && saleTs <= toMs) setSales(prev => [sale,...prev])
-    setCart([]); setPayModal(false)
+    setCart([]); setPayModal(false); setDiscount("")
     toast("✓ Venta registrada")
     if (mobile) setMView("prods")
     const {id:_, created_at:_c, ...fb} = sale
@@ -1239,18 +1267,33 @@ export default function App() {
   }
 
   /* stats */
-  const st = {
+  const st = useMemo(() => ({
     total: sales.reduce((s,v) => s+v.total, 0),
     ef:    sales.reduce((s,v) => s+(v.cash_paid||0), 0),
     mp:    sales.reduce((s,v) => s+(v.mp_paid||0), 0),
     items: sales.reduce((s,v) => s+(v.items||[]).reduce((a,i)=>a+i.qty,0), 0),
     count: sales.length,
-  }
-  const mLabel = s => {
+    mayor: sales.filter(v=>v.lista==="mayorista").reduce((s,v)=>s+v.total,0),
+  }), [sales])
+  const mLabel = useCallback(s => {
     if (s.method==="efectivo")      return {l:"● Efectivo", c:C.ok, bg:C.okbg}
     if (s.method==="transferencia") return {l:"● Transfer", c:C.bl, bg:C.blbg}
     return {l:"● Mixto", c:C.am, bg:C.ambg}
-  }
+  }, [])
+
+  // Memoized vendidos ranking — only recalculates when vendSales changes
+  const vendRanked = useMemo(() => {
+    const grouped = {}
+    vendSales.forEach(sale => {
+      ;(sale.items||[]).forEach(it => {
+        if (!grouped[it.product_name]) grouped[it.product_name] = {name:it.product_name, qty:0}
+        grouped[it.product_name].qty += it.qty
+      })
+    })
+    return Object.values(grouped).sort((a,b) => b.qty - a.qty)
+  }, [vendSales])
+
+  const vendTotalUnits = useMemo(() => vendRanked.reduce((s,r) => s+r.qty, 0), [vendRanked])
   // Shift functions
   const shiftsCol = user ? collection(db, `users/${user.uid}/shifts`) : null
 
@@ -1554,19 +1597,78 @@ export default function App() {
       </div>
 
       {/* footer */}
-      <div style={{borderTop:`1px solid ${C.br}`, padding:"15px 15px 18px",
+      <div style={{borderTop:`1px solid ${C.br}`, padding:"14px 14px 16px",
         background:C.card2}}>
+
+        {/* discount row */}
+        <div style={{display:"flex", alignItems:"center", gap:8, marginBottom:12}}>
+          <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+            fontWeight:700, color:C.tx3, letterSpacing:.8, textTransform:"uppercase",
+            flexShrink:0}}>Descuento</span>
+          <div style={{flex:1, position:"relative"}}>
+            <span style={{position:"absolute", left:10, top:"50%",
+              transform:"translateY(-50%)", fontFamily:"'Space Grotesk',monospace",
+              fontSize:13, color:C.tx3, pointerEvents:"none"}}>$</span>
+            <input
+              type="number"
+              value={discount}
+              onChange={e => setDiscount(e.target.value)}
+              placeholder="0"
+              min={0}
+              style={{width:"100%", background:C.card, border:`1px solid ${C.br}`,
+                borderRadius:8, color:discountAmt>0 ? C.er : C.tx,
+                padding:"8px 10px 8px 22px",
+                fontFamily:"'Space Grotesk',monospace", fontSize:14, fontWeight:600,
+                outline:"none", boxSizing:"border-box"}}
+              onFocus={e=>e.target.style.borderColor=C.er}
+              onBlur={e=>e.target.style.borderColor=C.br}/>
+          </div>
+          {discountAmt > 0 && (
+            <button onClick={() => setDiscount("")}
+              style={{background:"none", border:"none", color:C.tx3,
+                fontSize:16, padding:4, flexShrink:0}}>✕</button>
+          )}
+        </div>
+
+        {/* subtotal + discount lines */}
+        {discountAmt > 0 && (
+          <div style={{marginBottom:8}}>
+            <div style={{display:"flex", justifyContent:"space-between",
+              alignItems:"baseline", marginBottom:3}}>
+              <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:12,
+                fontWeight:500, color:C.tx3}}>Subtotal</span>
+              <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:14,
+                fontWeight:600, color:C.tx3}}>{$(cartTotal)}</span>
+            </div>
+            <div style={{display:"flex", justifyContent:"space-between",
+              alignItems:"baseline"}}>
+              <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:12,
+                fontWeight:600, color:C.er}}>− Descuento</span>
+              <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:14,
+                fontWeight:700, color:C.er}}>− {$(discountAmt)}</span>
+            </div>
+          </div>
+        )}
+
+        {/* final total */}
         <div style={{display:"flex", justifyContent:"space-between",
-          alignItems:"baseline", marginBottom:14}}>
+          alignItems:"baseline", marginBottom:12,
+          borderTop: discountAmt>0 ? `1px solid ${C.br}` : "none",
+          paddingTop: discountAmt>0 ? 8 : 0}}>
           <span style={{fontFamily:"'Space Grotesk',sans-serif",
-            fontSize:13, fontWeight:600, color:C.tx2, letterSpacing:.5,
+            fontSize:13, fontWeight:700, color:C.tx2, letterSpacing:.5,
             textTransform:"uppercase"}}>Total</span>
           <span style={{fontFamily:"'Space Grotesk',monospace",
-            fontSize:30, fontWeight:700, color:C.tx, letterSpacing:-1}}>
-            {$(cartTotal)}
+            fontSize:30, fontWeight:700, letterSpacing:-1,
+            color: discountAmt>0 ? C.ok : C.tx}}>
+            {$(cartFinal)}
           </span>
         </div>
-        <button onClick={() => cart.length ? setPayModal(true) : toast("Carrito vacío")}
+
+        <button onClick={() => {
+          if (!cart.length) return toast("Carrito vacío")
+          setPayModal(true)
+        }}
           style={{width:"100%",
             background: cart.length
               ? `linear-gradient(135deg,${C.v},${C.vm})`
@@ -1795,6 +1897,7 @@ export default function App() {
                 {l:"Transfer",   v:$(st.mp),    c:C.bl, bg:C.blbg, i:"📲"},
                 {l:"Artículos",  v:st.items,    c:C.am, bg:C.ambg, i:"📦"},
                 {l:"Ventas",     v:st.count,    c:C.v,  bg:C.vbg,  i:"🧾"},
+                {l:"Mayorista",  v:$(st.mayor), c:C.am, bg:C.ambg, i:"📦"},
               ].map(({l,v,c,bg,i}) => (
                 <div key={l}
                   style={{background:C.card, border:`1px solid ${C.br}`,
@@ -1865,6 +1968,13 @@ export default function App() {
                               background:C.ambg, color:C.am,
                               border:`1px solid ${C.am}33`}}>📦 MAY</span>
                           )}
+                          {s.discount > 0 && (
+                            <span style={{fontFamily:"'Space Grotesk',sans-serif",
+                              fontSize:10, fontWeight:700, letterSpacing:.6,
+                              padding:"3px 9px", borderRadius:20,
+                              background:C.erbg, color:C.er,
+                              border:`1px solid ${C.er}33`}}>− {$(s.discount)}</span>
+                          )}
                         </div>
                         <div style={{display:"flex", alignItems:"center", gap:8}}>
                           <span style={{fontFamily:"'Space Grotesk',monospace",
@@ -1919,15 +2029,9 @@ export default function App() {
 
         {/* ── PRODUCTOS VENDIDOS ── */}
         {tab==="vendidos" && (() => {
-          const grouped = {}
-          vendSales.forEach(sale => {
-            ;(sale.items||[]).forEach(it => {
-              if (!grouped[it.product_name]) grouped[it.product_name] = {name:it.product_name, qty:0}
-              grouped[it.product_name].qty += it.qty
-            })
-          })
-          const ranked = Object.values(grouped).sort((a,b) => b.qty - a.qty)
-          const totalUnits = ranked.reduce((s,r) => s+r.qty, 0)
+          const grouped = vendRanked.reduce((acc,r) => ({...acc,[r.name]:r}), {})
+          const ranked = vendRanked
+          const totalUnits = vendTotalUnits
           const maxQty = ranked[0]?.qty || 1
 
           // Medal chars as JS strings — no HTML entities
@@ -2170,7 +2274,7 @@ export default function App() {
       </div>
 
       {prodModal && <ProductModal p={prodModal.p} onClose={()=>setProdModal(null)} onSave={saveProd}/>}
-      {payModal  && <PayModal total={cartTotal} onClose={()=>setPayModal(false)} onPay={paySale}/>}
+      {payModal  && <PayModal total={cartFinal} onClose={()=>{ setPayModal(false) }} onPay={paySale}/>}
       {delModal  && <Del name={delModal.name} onYes={()=>delProd(delModal.id)} onNo={()=>setDelModal(null)}/>}
       {delSaleModal && (
         <Del
