@@ -1355,9 +1355,10 @@ export default function App() {
     <h2>Detalle de ventas (${shiftSales.length})</h2>
     ${shiftSales.map((s,i) => {
       const ts = (s.created_at?.toDate ? s.created_at.toDate() : new Date(s.created_at.seconds*1000))
+      const icon = s.method==="efectivo" ? "💵" : s.method==="transferencia" ? "📲" : "🔀"
+      const mayBadge = s.lista==="mayorista" ? ' <b style="color:#d97706">MAY</b>' : ""
       return `<div class="row">
-        <span>#${shiftSales.length-i} &nbsp; ${fmtFull(ts)} &nbsp;
-          ${s.method==="efectivo"?"💵":"s.method==="transferencia"?"📲":"🔀"} ${s.lista==="mayorista"?' <b style=color:#d97706>MAY</b>':""}</span>
+        <span>#${shiftSales.length-i} &nbsp; ${fmtFull(ts)} &nbsp; ${icon}${mayBadge}</span>
         <b>${money(s.total)}</b>
       </div>`
     }).join("")}
