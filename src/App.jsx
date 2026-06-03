@@ -1831,14 +1831,14 @@ export default function App() {
                 ))}
               </div>
               <div style={{flex:1, overflow:"auto", WebkitOverflowScrolling:"touch"}}>
-                {mView==="prods" ? <ProdGrid/> : <CartPanel/>}
+                {mView==="prods" ? ProdGrid() : CartPanel()}
               </div>
             </div>
           ) : (
             <div style={{display:"grid", gridTemplateColumns:"1fr 315px",
               height:"calc(100vh - 62px)", overflow:"hidden"}}>
-              <div style={{overflowY:"auto", background:C.bg}}><ProdGrid/></div>
-              <div style={{overflow:"hidden"}}><CartPanel/></div>
+              <div style={{overflowY:"auto", background:C.bg}}>{ProdGrid()}</div>
+              <div style={{overflow:"hidden"}}>{CartPanel()}</div>
             </div>
           )
         )}
