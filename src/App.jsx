@@ -1277,25 +1277,137 @@ export default function App() {
     finally { setShiftBusy(false) }
   }
 
+  const generateShiftPDF = (shiftSales, openedD, closedD) => {
+    const pad = n => String(n).padStart(2,"0")
+    const fmtFull = d =>
+      `${pad(d.getDate())}/${pad(d.getMonth()+1)}/${d.getFullYear()} ${pad(d.getHours())}:${pad(d.getMinutes())}`
+    const money = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
+
+    // Aggregate product totals
+    const prods = {}
+    shiftSales.forEach(s => {
+      ;(s.items||[]).forEach(it => {
+        if (!prods[it.product_name]) prods[it.product_name] = {name:it.product_name,qty:0,total:0}
+        prods[it.product_name].qty   += it.qty
+        prods[it.product_name].total += it.product_price * it.qty
+      })
+    })
+    const prodList = Object.values(prods).sort((a,b) => b.qty - a.qty)
+    const totalVentas   = shiftSales.reduce((s,v)=>s+v.total,0)
+    const totalEfectivo = shiftSales.reduce((s,v)=>s+(v.cash_paid||0),0)
+    const totalMP       = shiftSales.reduce((s,v)=>s+(v.mp_paid||0),0)
+    const totalArticulos= shiftSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
+    const mayorTotal    = shiftSales.filter(v=>v.lista==="mayorista").reduce((s,v)=>s+v.total,0)
+
+    const html = `<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8"/>
+<title>Cierre de Caja — MAGO Drinks</title>
+<style>
+  *{margin:0;padding:0;box-sizing:border-box}
+  body{font-family:'Segoe UI',Arial,sans-serif;background:#fff;color:#111;padding:32px;max-width:720px;margin:auto}
+  h1{font-size:26px;font-weight:800;color:#5b21b6;margin-bottom:2px}
+  .sub{font-size:13px;color:#666;margin-bottom:24px}
+  .row{display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid #f0f0f0;font-size:14px}
+  .row b{color:#111}
+  .section{margin-bottom:28px}
+  .section h2{font-size:13px;font-weight:700;letter-spacing:1.2px;text-transform:uppercase;color:#9333ea;margin-bottom:10px}
+  .stat-grid{display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-bottom:28px}
+  .stat{background:#f5f3ff;border-radius:10px;padding:14px 16px}
+  .stat .label{font-size:10px;font-weight:700;letter-spacing:1px;color:#7c3aed;text-transform:uppercase;margin-bottom:4px}
+  .stat .val{font-size:22px;font-weight:800;color:#5b21b6}
+  .prod-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f5f3ff;font-size:13px}
+  .badge{display:inline-block;background:#ede9fe;color:#7c3aed;border-radius:20px;padding:2px 9px;font-size:11px;font-weight:700;margin-right:8px}
+  .footer{margin-top:32px;text-align:center;font-size:11px;color:#aaa}
+  @media print{body{padding:16px}}
+</style>
+</head>
+<body>
+  <h1>🧾 Cierre de Caja</h1>
+  <p class="sub">MAGO Drinks POS &nbsp;·&nbsp; Generado el ${fmtFull(new Date())}</p>
+
+  <div class="section">
+    <h2>Período</h2>
+    <div class="row"><span>Apertura</span><b>${fmtFull(openedD)}</b></div>
+    <div class="row"><span>Cierre</span><b>${fmtFull(closedD)}</b></div>
+  </div>
+
+  <div class="stat-grid">
+    <div class="stat"><div class="label">Total</div><div class="val">${money(totalVentas)}</div></div>
+    <div class="stat"><div class="label">Ventas</div><div class="val">${shiftSales.length}</div></div>
+    <div class="stat"><div class="label">Artículos</div><div class="val">${totalArticulos}</div></div>
+    <div class="stat"><div class="label">Efectivo</div><div class="val">${money(totalEfectivo)}</div></div>
+    <div class="stat"><div class="label">Transfer / MP</div><div class="val">${money(totalMP)}</div></div>
+    <div class="stat"><div class="label">Mayorista</div><div class="val">${money(mayorTotal)}</div></div>
+  </div>
+
+  <div class="section">
+    <h2>Productos vendidos</h2>
+    ${prodList.map((p,i) => `
+      <div class="prod-row">
+        <span><span class="badge">#${i+1}</span>${p.name}</span>
+        <span><b>${p.qty}</b> uds &nbsp;·&nbsp; ${money(p.total)}</span>
+      </div>`).join("")}
+  </div>
+
+  <div class="section">
+    <h2>Detalle de ventas (${shiftSales.length})</h2>
+    ${shiftSales.map((s,i) => {
+      const ts = (s.created_at?.toDate ? s.created_at.toDate() : new Date(s.created_at.seconds*1000))
+      return `<div class="row">
+        <span>#${shiftSales.length-i} &nbsp; ${fmtFull(ts)} &nbsp;
+          ${s.method==="efectivo"?"💵":"s.method==="transferencia"?"📲":"🔀"} ${s.lista==="mayorista"?' <b style=color:#d97706>MAY</b>':""}</span>
+        <b>${money(s.total)}</b>
+      </div>`
+    }).join("")}
+  </div>
+
+  <div class="footer">MAGO Drinks POS — Documento generado automáticamente al cierre de caja</div>
+</body>
+</html>`
+
+    const blob = new Blob([html], {type:"text/html"})
+    const url  = URL.createObjectURL(blob)
+    const a    = document.createElement("a")
+    a.href     = url
+    a.download = `cierre-caja-${pad(openedD.getDate())}${pad(openedD.getMonth()+1)}${openedD.getFullYear()}-${pad(openedD.getHours())}${pad(openedD.getMinutes())}.html`
+    a.click()
+    setTimeout(()=>URL.revokeObjectURL(url), 5000)
+  }
+
   const closeShift = async () => {
     if (!user || !activeShift || shiftBusy) return
     setShiftBusy(true)
     try {
       const closedAt = Timestamp.now()
-      await updateDoc(doc(db, `users/${user.uid}/shifts`, activeShift.id), {
-        status: "closed",
-        closed_at: closedAt,
-      })
-      // Set ranges to full shift period
-      const openedD  = activeShift.opened_at.toDate()
       const closedD  = closedAt.toDate()
+      const openedD  = activeShift.opened_at.toDate()
       const pad = n => String(n).padStart(2,"0")
       const fmt = d => `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+
+      await updateDoc(doc(db, `users/${user.uid}/shifts`, activeShift.id), {
+        status: "closed", closed_at: closedAt,
+      })
+
+      // Fetch sales for this shift period to include in PDF
+      const tsFrom = activeShift.opened_at
+      const snap   = await getDocs(query(
+        collection(db, `users/${user.uid}/sales`),
+        where("created_at",">=",tsFrom),
+        where("created_at","<=",closedAt)
+      ))
+      const shiftSales = snap.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(b.created_at?.seconds||0)-(a.created_at?.seconds||0))
+
+      // Generate and download PDF
+      generateShiftPDF(shiftSales, openedD, closedD)
+
       setHistFrom(fmt(openedD)); setHistTo(fmt(closedD))
       setVendFrom(fmt(openedD)); setVendTo(fmt(closedD))
       setActiveShift(null)
-      toast("🔒 Cierre de caja registrado")
-    } catch(e) { toast("Error al cerrar caja", true) }
+      toast("🔒 Cierre registrado — descargando PDF")
+    } catch(e) { console.error(e); toast("Error al cerrar caja", true) }
     finally { setShiftBusy(false) }
   }
 
@@ -1569,11 +1681,14 @@ export default function App() {
               transform:"translateY(-50%)", fontFamily:"'Space Grotesk',monospace",
               fontSize:13, color:C.tx3, pointerEvents:"none"}}>$</span>
             <input
-              type="number"
+              type="text"
+              inputMode="numeric"
               value={discount}
-              onChange={e => setDiscount(e.target.value)}
+              onChange={e => {
+                const v = e.target.value.replace(/[^0-9]/g,"")
+                setDiscount(v)
+              }}
               placeholder="0"
-              min={0}
               style={{width:"100%", background:C.card, border:`1px solid ${C.br}`,
                 borderRadius:8, color:discountAmt>0 ? C.er : C.tx,
                 padding:"8px 10px 8px 22px",
