@@ -1293,11 +1293,16 @@ export default function App() {
       })
     })
     const prodList = Object.values(prods).sort((a,b) => b.qty - a.qty)
-    const totalVentas   = shiftSales.reduce((s,v)=>s+v.total,0)
-    const totalEfectivo = shiftSales.reduce((s,v)=>s+(v.cash_paid||0),0)
-    const totalMP       = shiftSales.reduce((s,v)=>s+(v.mp_paid||0),0)
-    const totalArticulos= shiftSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
-    const mayorTotal    = shiftSales.filter(v=>v.lista==="mayorista").reduce((s,v)=>s+v.total,0)
+    const totalVentas    = shiftSales.reduce((s,v)=>s+v.total,0)
+    const totalEfectivo  = shiftSales.reduce((s,v)=>s+(v.cash_paid||0),0)
+    const totalMP        = shiftSales.reduce((s,v)=>s+(v.mp_paid||0),0)
+    const totalArticulos = shiftSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
+    const mayorSales     = shiftSales.filter(v=>v.lista==="mayorista")
+    const minorSales     = shiftSales.filter(v=>v.lista!=="mayorista")
+    const mayorTotal     = mayorSales.reduce((s,v)=>s+v.total,0)
+    const minorTotal     = minorSales.reduce((s,v)=>s+v.total,0)
+    const mayorArticulos = mayorSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
+    const minorArticulos = minorSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
 
     const html = `<!DOCTYPE html>
 <html lang="es">
@@ -1317,6 +1322,7 @@ export default function App() {
   .stat{background:#f5f3ff;border-radius:10px;padding:14px 16px}
   .stat .label{font-size:10px;font-weight:700;letter-spacing:1px;color:#7c3aed;text-transform:uppercase;margin-bottom:4px}
   .stat .val{font-size:22px;font-weight:800;color:#5b21b6}
+  .stat .sub-val{font-size:11px;color:#888;margin-top:3px}
   .prod-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid #f5f3ff;font-size:13px}
   .badge{display:inline-block;background:#ede9fe;color:#7c3aed;border-radius:20px;padding:2px 9px;font-size:11px;font-weight:700;margin-right:8px}
   .footer{margin-top:32px;text-align:center;font-size:11px;color:#aaa}
@@ -1334,12 +1340,13 @@ export default function App() {
   </div>
 
   <div class="stat-grid">
-    <div class="stat"><div class="label">Total</div><div class="val">${money(totalVentas)}</div></div>
+    <div class="stat"><div class="label">Total General</div><div class="val">${money(totalVentas)}</div></div>
     <div class="stat"><div class="label">Ventas</div><div class="val">${shiftSales.length}</div></div>
     <div class="stat"><div class="label">Artículos</div><div class="val">${totalArticulos}</div></div>
     <div class="stat"><div class="label">Efectivo</div><div class="val">${money(totalEfectivo)}</div></div>
     <div class="stat"><div class="label">Transfer / MP</div><div class="val">${money(totalMP)}</div></div>
-    <div class="stat"><div class="label">Mayorista</div><div class="val">${money(mayorTotal)}</div></div>
+    <div class="stat" style="background:#f0fdf4"><div class="label" style="color:#059669">🏷️ Total Minorista</div><div class="val" style="color:#059669">${money(minorTotal)}</div><div class="sub-val">${minorSales.length} ventas · ${minorArticulos} artículos</div></div>
+    <div class="stat" style="background:#fffbeb"><div class="label" style="color:#d97706">📦 Total Mayorista</div><div class="val" style="color:#d97706">${money(mayorTotal)}</div><div class="sub-val">${mayorSales.length} ventas · ${mayorArticulos} artículos</div></div>
   </div>
 
   <div class="section">
