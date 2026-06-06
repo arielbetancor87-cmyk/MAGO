@@ -1538,11 +1538,13 @@ export default function App() {
         </div>
       ) : (
         <div style={{display:"grid",
-          gridTemplateColumns:"repeat(auto-fill,minmax(145px,1fr))", gap:12}}>
+          gridTemplateColumns: mobile ? "repeat(4,1fr)" : "repeat(auto-fill,minmax(145px,1fr))",
+          gap: mobile ? 6 : 12}}>
           {filteredProds.map(p => (
             <div key={p.id}
               style={{background:C.card, border:`1px solid ${C.br}`,
-                borderRadius:16, overflow:"hidden", position:"relative",
+                borderRadius: mobile ? 10 : 16,
+                overflow:"hidden", position:"relative",
                 boxShadow:C.sh, transition:"border-color .2s, box-shadow .2s"}}
               onMouseEnter={e=>{
                 e.currentTarget.style.borderColor=`${C.v}66`
@@ -1551,38 +1553,55 @@ export default function App() {
                 e.currentTarget.style.borderColor=C.br
                 e.currentTarget.style.boxShadow=C.sh}}>
 
-              {/* action buttons */}
-              <div style={{position:"absolute", top:7, right:7,
-                display:"flex", gap:4, zIndex:5}}>
+              {/* desktop: edit + delete buttons */}
+              {!mobile && (
+                <div style={{position:"absolute", top:7, right:7,
+                  display:"flex", gap:4, zIndex:5}}>
+                  <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
+                    style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
+                      borderRadius:7, color:C.v, width:28, height:28,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:13}}>✏️</button>
+                  <button onClick={e=>{e.stopPropagation();setDelModal(p)}}
+                    style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
+                      borderRadius:7, color:C.er, width:28, height:28,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:13}}>🗑️</button>
+                </div>
+              )}
+
+              {/* mobile: small edit button top-left */}
+              {mobile && (
                 <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
-                  style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
-                    borderRadius:7, color:C.v, width:28, height:28,
+                  style={{position:"absolute", top:3, left:3, zIndex:5,
+                    background:"rgba(6,4,17,.65)", border:"none",
+                    borderRadius:5, color:C.v, width:18, height:18,
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:13}}>✏️</button>
-                <button onClick={e=>{e.stopPropagation();setDelModal(p)}}
-                  style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
-                    borderRadius:7, color:C.er, width:28, height:28,
-                    display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:13}}>🗑️</button>
-              </div>
+                    fontSize:9, lineHeight:1}}>✏️</button>
+              )}
 
               <div onClick={() => addItem(p)}
                 style={{cursor:"pointer", WebkitTapHighlightColor:"transparent"}}>
-                <div style={{paddingTop:"72%", position:"relative",
-                  overflow:"hidden", background:C.vbg}}>
+                <div style={{paddingTop: mobile ? "85%" : "72%",
+                  position:"relative", overflow:"hidden", background:C.vbg}}>
                   <img src={p.img} alt={p.name}
                     style={{position:"absolute", inset:0, width:"100%",
                       height:"100%", objectFit:"cover"}}
                     onError={e=>{e.target.src=FALLBACK}}/>
-                  {/* glow overlay on hover — pure CSS trick */}
                   <div style={{position:"absolute", inset:0,
-                    background:`linear-gradient(to top, ${C.card}cc 0%, transparent 60%)`}}/>
+                    background:`linear-gradient(to top, ${C.card}cc 0%, transparent 55%)`}}/>
                 </div>
-                <div style={{padding:"10px 12px"}}>
-                  <div style={{fontSize:13, fontWeight:600, color:C.tx,
-                    lineHeight:1.3, marginBottom:4}}>{p.name}</div>
+                <div style={{padding: mobile ? "5px 5px 6px" : "10px 12px"}}>
+                  <div style={{fontSize: mobile ? 9 : 13, fontWeight:600,
+                    color:C.tx, lineHeight:1.25, marginBottom: mobile ? 1 : 4,
+                    overflow:"hidden", display:"-webkit-box",
+                    WebkitLineClamp:2, WebkitBoxOrient:"vertical"}}>
+                    {p.name}
+                  </div>
                   <div style={{fontFamily:"'Space Grotesk',monospace",
-                    fontSize:15, fontWeight:700, color:C.v}}>{$(p.price)}</div>
+                    fontSize: mobile ? 10 : 15, fontWeight:700, color:C.v}}>
+                    {$(p.price)}
+                  </div>
                 </div>
               </div>
             </div>
