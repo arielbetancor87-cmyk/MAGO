@@ -1,7 +1,7 @@
 import { useState, useEffect, useRef } from "react"
 import {
   collection, addDoc, updateDoc, deleteDoc,
-  doc, getDocs, query, where, Timestamp, setDoc, getDoc
+  doc, getDocs, query, where, Timestamp, setDoc, getDoc, onSnapshot
 } from "firebase/firestore"
 import {
   onAuthStateChanged, signOut,
@@ -305,6 +305,235 @@ function AuthScreen() {
         fontFamily:"'DM Sans',sans-serif"}}>
         Tus productos y ventas quedan guardados<br/>en tu cuenta personal
       </p>
+    </div>
+  )
+}
+
+
+/* ════════════════════════════════════════════════════════════════════════
+   ORDER PAGE  (public — no auth required)
+════════════════════════════════════════════════════════════════════════ */
+function OrderPage({uid}) {
+  const [prods,    setProds]    = useState([])
+  const [cart,     setCart]     = useState([])
+  const [name,     setName]     = useState("")
+  const [notes,    setNotes]    = useState("")
+  const [loading,  setLoading]  = useState(true)
+  const [sending,  setSending]  = useState(false)
+  const [sent,     setSent]     = useState(false)
+  const [err,      setErr]      = useState("")
+
+  useEffect(() => {
+    getDocs(collection(db, `users/${uid}/products`))
+      .then(s => {
+        const list = s.docs.map(d => ({id:d.id,...d.data()}))
+        list.sort((a,b)=>(a.created_at?.seconds||0)-(b.created_at?.seconds||0))
+        setProds(list)
+      })
+      .catch(() => setErr("No se pudo cargar el catálogo."))
+      .finally(() => setLoading(false))
+  }, [uid])
+
+  const cartTotal = cart.reduce((s,i) => s+i.price*i.qty, 0)
+  const cartQty   = cart.reduce((s,i) => s+i.qty, 0)
+
+  const addItem = p => setCart(prev => {
+    const ex = prev.find(i => i.id===p.id)
+    return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
+  })
+  const setQtyO = (id,q) => setCart(prev =>
+    q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
+  )
+
+  const submit = async () => {
+    if (!name.trim()) return setErr("Ingresá tu nombre para continuar.")
+    if (!cart.length)  return setErr("Agregá al menos un producto.")
+    setSending(true); setErr("")
+    try {
+      await addDoc(collection(db, `users/${uid}/orders`), {
+        customer_name: name.trim(),
+        notes:         notes.trim(),
+        items:         cart.map(i=>({product_name:i.name, product_price:i.price, qty:i.qty})),
+        total:         cartTotal,
+        status:        "pending",
+        lista:         "minorista",
+        created_at:    Timestamp.now(),
+      })
+      setSent(true)
+    } catch(e) { setErr("Error al enviar. Intentá de nuevo.") }
+    finally { setSending(false) }
+  }
+
+  const OC = {
+    bg:"#060411", card:"#110b29", card2:"#19113b", br:"#251b4f",
+    v:"#a78bfa", vm:"#c084fc", vbg:"rgba(167,139,250,0.08)",
+    tx:"#f8fafc", tx2:"#94a3b8", tx3:"#64748b",
+    ok:"#34d399", er:"#f87171",
+  }
+
+  if (sent) return (
+    <div style={{minHeight:"100vh", background:OC.bg, display:"flex",
+      flexDirection:"column", alignItems:"center", justifyContent:"center",
+      padding:24, fontFamily:"'DM Sans',sans-serif"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;700&family=DM+Sans:wght@400;600&display=swap')`}</style>
+      <div style={{textAlign:"center", maxWidth:380}}>
+        <div style={{fontSize:64, marginBottom:16}}>🎉</div>
+        <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:24, fontWeight:700,
+          color:OC.v, marginBottom:8}}>¡Pedido enviado!</h2>
+        <p style={{color:OC.tx2, fontSize:15, lineHeight:1.7, marginBottom:24}}>
+          Tu pedido fue registrado correctamente.<br/>
+          El local se va a comunicar con vos pronto.
+        </p>
+        <div style={{background:OC.card, border:`1px solid ${OC.br}`,
+          borderRadius:14, padding:"16px 20px", textAlign:"left"}}>
+          <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+            fontWeight:700, color:OC.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:10}}>Resumen</p>
+          {cart.map(i=>(
+            <div key={i.id} style={{display:"flex", justifyContent:"space-between",
+              fontSize:13, color:OC.tx2, padding:"4px 0",
+              borderBottom:`1px solid ${OC.br}`}}>
+              <span>{i.name} ×{i.qty}</span>
+              <span>{$(i.price*i.qty)}</span>
+            </div>
+          ))}
+          <div style={{display:"flex", justifyContent:"space-between",
+            marginTop:10, fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:16, fontWeight:700, color:OC.v}}>
+            <span>Total</span><span>{$(cartTotal)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  )
+
+  return (
+    <div style={{minHeight:"100vh", background:OC.bg,
+      fontFamily:"'DM Sans',sans-serif", color:OC.tx,
+      backgroundImage:"radial-gradient(ellipse at 50% 0%, rgba(167,139,250,0.07) 0%, transparent 60%)"}}>
+      <style>{`@import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;600;700&family=DM+Sans:wght@400;500;600&family=DM+Mono:wght@500;700&display=swap')`}</style>
+
+      {/* header */}
+      <div style={{background:`${OC.card}ee`, borderBottom:`1px solid ${OC.br}`,
+        padding:"12px 16px", display:"flex", alignItems:"center",
+        justifyContent:"space-between", position:"sticky", top:0, zIndex:10}}>
+        <div>
+          <h1 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:17,
+            fontWeight:700, color:OC.v, margin:0}}>MAGO Drinks</h1>
+          <p style={{fontSize:11, color:OC.tx3, margin:0}}>Catálogo de pedidos</p>
+        </div>
+        {cartQty > 0 && (
+          <div style={{background:`linear-gradient(135deg,${OC.v},${OC.vm})`,
+            color:"#0f0a1e", borderRadius:20, padding:"5px 14px",
+            fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:13}}>
+            🛒 {cartQty} {cartQty===1?"ítem":"ítems"}
+          </div>
+        )}
+      </div>
+
+      <div style={{maxWidth:600, margin:"0 auto", padding:"16px 12px 120px"}}>
+        {loading ? (
+          <div style={{textAlign:"center", padding:80, color:OC.tx3}}>Cargando catálogo...</div>
+        ) : err && !prods.length ? (
+          <div style={{textAlign:"center", padding:60, color:OC.er}}>{err}</div>
+        ) : (
+          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10}}>
+            {prods.map(p => {
+              const inCart = cart.find(i=>i.id===p.id)
+              return (
+                <div key={p.id} style={{background:OC.card, border:`1px solid ${inCart?OC.v+"66":OC.br}`,
+                  borderRadius:12, overflow:"hidden",
+                  boxShadow: inCart?`0 0 16px ${OC.v}22`:"none",
+                  transition:"border-color .2s, box-shadow .2s"}}>
+                  <div style={{paddingTop:"75%", position:"relative",
+                    overflow:"hidden", background:OC.vbg}}>
+                    <img src={p.img||FALLBACK} alt={p.name}
+                      style={{position:"absolute", inset:0, width:"100%",
+                        height:"100%", objectFit:"cover"}}
+                      onError={e=>e.target.src=FALLBACK}/>
+                  </div>
+                  <div style={{padding:"8px 10px"}}>
+                    <div style={{fontSize:12, fontWeight:600, color:OC.tx,
+                      lineHeight:1.3, marginBottom:3}}>{p.name}</div>
+                    <div style={{fontFamily:"'DM Mono',monospace", fontSize:13,
+                      fontWeight:700, color:OC.v, marginBottom:8}}>{$(p.price)}</div>
+                    {!inCart ? (
+                      <button onClick={()=>addItem(p)}
+                        style={{width:"100%", background:`linear-gradient(135deg,${OC.v},${OC.vm})`,
+                          border:"none", borderRadius:7, color:"#0f0a1e",
+                          padding:"7px 0", fontFamily:"'Space Grotesk',sans-serif",
+                          fontWeight:700, fontSize:12, cursor:"pointer"}}>
+                        + Agregar
+                      </button>
+                    ) : (
+                      <div style={{display:"flex", alignItems:"center",
+                        justifyContent:"space-between", gap:4}}>
+                        <button onClick={()=>setQtyO(p.id,inCart.qty-1)}
+                          style={{width:28, height:28, background:OC.card2,
+                            border:`1px solid ${OC.br}`, borderRadius:7,
+                            color:OC.tx2, fontSize:18, cursor:"pointer",
+                            display:"flex", alignItems:"center", justifyContent:"center"}}>−</button>
+                        <span style={{fontFamily:"'DM Mono',monospace",
+                          fontSize:14, color:OC.tx, fontWeight:700}}>{inCart.qty}</span>
+                        <button onClick={()=>setQtyO(p.id,inCart.qty+1)}
+                          style={{width:28, height:28, background:OC.vbg,
+                            border:`1px solid ${OC.v}44`, borderRadius:7,
+                            color:OC.v, fontSize:18, cursor:"pointer",
+                            display:"flex", alignItems:"center", justifyContent:"center"}}>+</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )
+            })}
+          </div>
+        )}
+      </div>
+
+      {/* sticky checkout bar */}
+      {cartQty > 0 && (
+        <div style={{position:"fixed", bottom:0, left:0, right:0,
+          background:OC.card, borderTop:`1px solid ${OC.br}`,
+          padding:"14px 16px 20px",
+          boxShadow:"0 -8px 32px rgba(0,0,0,.5)"}}>
+          <div style={{maxWidth:600, margin:"0 auto"}}>
+            <div style={{display:"flex", gap:8, marginBottom:10}}>
+              <input type="text" value={name} onChange={e=>setName(e.target.value)}
+                placeholder="Tu nombre *"
+                style={{flex:1, background:OC.card2, border:`1px solid ${OC.br}`,
+                  borderRadius:9, color:OC.tx, padding:"10px 13px", fontSize:14,
+                  outline:"none", fontFamily:"'DM Sans',sans-serif"}}
+                onFocus={e=>e.target.style.borderColor=OC.v}
+                onBlur={e=>e.target.style.borderColor=OC.br}/>
+              <input type="text" value={notes} onChange={e=>setNotes(e.target.value)}
+                placeholder="Aclaración (opcional)"
+                style={{flex:1, background:OC.card2, border:`1px solid ${OC.br}`,
+                  borderRadius:9, color:OC.tx, padding:"10px 13px", fontSize:14,
+                  outline:"none", fontFamily:"'DM Sans',sans-serif"}}
+                onFocus={e=>e.target.style.borderColor=OC.v}
+                onBlur={e=>e.target.style.borderColor=OC.br}/>
+            </div>
+            {err && <p style={{color:OC.er, fontSize:12, marginBottom:8}}>{err}</p>}
+            <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+              gap:10}}>
+              <div style={{fontFamily:"'Space Grotesk',sans-serif"}}>
+                <span style={{fontSize:11, color:OC.tx3, letterSpacing:1,
+                  textTransform:"uppercase", display:"block"}}>Total</span>
+                <span style={{fontSize:22, fontWeight:700, color:OC.v,
+                  letterSpacing:-1}}>{$(cartTotal)}</span>
+              </div>
+              <button onClick={submit} disabled={sending}
+                style={{flex:1, maxWidth:220, background:sending?"#444":`linear-gradient(135deg,${OC.v},${OC.vm})`,
+                  border:"none", borderRadius:10, color:"#0f0a1e",
+                  padding:"13px 0", fontFamily:"'Space Grotesk',sans-serif",
+                  fontWeight:700, fontSize:15, cursor:sending?"wait":"pointer",
+                  boxShadow:sending?"none":`0 0 20px ${OC.v}44`}}>
+                {sending ? "Enviando..." : "Enviar pedido"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
@@ -1028,6 +1257,9 @@ export default function App() {
   const {show:toast, el:toastEl} = useToast()
   const [user,       setUser]       = useState(undefined)
   const [userStatus, setUserStatus] = useState(null)
+  // ── URL-based routing — detect ?order=uid for public order page ──────
+  const orderUID = new URLSearchParams(window.location.search).get("order")
+
   const [tab,        setTab]        = useState("caja")
   const [prods,      setProds]      = useState([])
   const [mayorProds, setMayorProds] = useState([])
@@ -1042,6 +1274,9 @@ export default function App() {
   const [loadS,      setLoadS]      = useState(false)
   const [vendSales,  setVendSales]  = useState([])
   const [loadV,      setLoadV]      = useState(false)
+  const [orders,     setOrders]     = useState([])
+  const [loadOrders, setLoadOrders] = useState(false)
+  const [orderToPay, setOrderToPay] = useState(null)
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
@@ -1133,6 +1368,19 @@ export default function App() {
       .then(list => setVendSales(list))
       .catch(console.warn).finally(() => setLoadV(false))
   }, [user, tab, vendFrom, vendTo])
+
+  // Load pending orders — real-time listener
+  useEffect(() => {
+    if (!user || isAdmin) return
+    const ordersCol = collection(db, `users/${user.uid}/orders`)
+    const unsub = onSnapshot(
+      query(ordersCol, where("status","==","pending")),
+      snap => setOrders(snap.docs.map(d=>({id:d.id,...d.data()}))
+        .sort((a,b)=>(b.created_at?.seconds||0)-(a.created_at?.seconds||0))),
+      err => console.warn("orders snap:", err)
+    )
+    return () => unsub()
+  }, [user])
 
   // Load active shift on login
   useEffect(() => {
@@ -1247,6 +1495,45 @@ export default function App() {
     count: sales.length,
     mayor: sales.filter(v=>v.lista==="mayorista").reduce((s,v)=>s+v.total,0),
   }
+  const confirmOrder = async (order, payInfo) => {
+    if (!user || !salesCol) return
+    const td = today()
+    // Create sale from order
+    const sale = {
+      id:"_o"+order.id,
+      date:td, total:order.total,
+      lista: order.lista||"minorista",
+      method:payInfo.mode, cash_paid:payInfo.cashPaid||0,
+      mp_paid:payInfo.mpPaid||0, change_amount:payInfo.change||0,
+      items:order.items,
+      customer_name:order.customer_name,
+      created_at:{seconds:Date.now()/1000,toDate:()=>new Date()},
+    }
+    // Optimistic
+    const pad = n=>String(n).padStart(2,"0")
+    const now = new Date()
+    const fmt = d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+    const nowDT = fmt(now)
+    if (histFrom <= nowDT && nowDT <= histTo) setSales(prev=>[sale,...prev])
+    setOrderToPay(null)
+    toast("✓ Pedido cobrado")
+    // Save to Firebase — replace temp id with real one
+    const {id:_,created_at:_c,...fb}=sale
+    addDoc(salesCol,{...fb,created_at:Timestamp.now()})
+      .then(r=>setSales(prev=>prev.map(s=>s.id===sale.id?{...s,id:r.id}:s)))
+      .catch(console.warn)
+    // Mark order as confirmed
+    updateDoc(doc(db,`users/${user.uid}/orders`,order.id),{status:"confirmed"})
+      .then(()=>setOrders(prev=>prev.filter(o=>o.id!==order.id)))
+      .catch(console.warn)
+  }
+
+  const cancelOrder = id => {
+    setOrders(prev=>prev.filter(o=>o.id!==id))
+    updateDoc(doc(db,`users/${user.uid}/orders`,id),{status:"cancelled"}).catch(console.warn)
+    toast("Pedido cancelado")
+  }
+
   const mLabel = s => {
     if (s.method==="efectivo")      return {l:"● Efectivo", c:C.ok, bg:C.okbg}
     if (s.method==="transferencia") return {l:"● Transfer", c:C.bl, bg:C.blbg}
@@ -1418,6 +1705,9 @@ export default function App() {
     } catch(e) { console.error(e); toast("Error al cerrar caja", true) }
     finally { setShiftBusy(false) }
   }
+
+  /* ── PUBLIC ORDER PAGE ── */
+  if (orderUID) return <OrderPage uid={orderUID}/>
 
   /* ── STATE GATES ── */
   if (user === undefined) return (
@@ -1802,7 +2092,7 @@ export default function App() {
             filter:"drop-shadow(0 0 12px rgba(167,139,250,0.3))"}}/>
 
           <div style={{display:"flex", alignItems:"center", gap:6}}>
-            {[["caja","🏪","CAJA"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"]].map(([k,ic,l]) => (
+            {[["caja","🏪","CAJA"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"]].map(([k,ic,l]) => (
               <button key={k} onClick={() => setTab(k)}
                 style={{
                   background: tab===k ? C.vbg : "transparent",
@@ -2128,6 +2418,153 @@ export default function App() {
           </div>
         )}
 
+
+        {/* ── PEDIDOS ── */}
+        {tab==="pedidos" && (
+          <div style={{maxWidth:760, margin:"0 auto", padding:"24px 16px"}}>
+
+            {/* header + share link */}
+            <div style={{display:"flex", alignItems:"flex-start",
+              justifyContent:"space-between", marginBottom:22,
+              flexWrap:"wrap", gap:12}}>
+              <div>
+                <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
+                  fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                  Pedidos pendientes
+                </h2>
+                <p style={{fontFamily:"'DM Mono',monospace",
+                  fontSize:12, color:C.tx3, margin:0}}>
+                  {orders.length} pedido{orders.length!==1?"s":""} en espera
+                </p>
+              </div>
+
+              {/* WhatsApp share */}
+              <div style={{display:"flex", flexDirection:"column", gap:8, alignItems:"flex-end"}}>
+                <div style={{background:C.card, border:`1px solid ${C.br}`,
+                  borderRadius:10, padding:"8px 12px",
+                  fontFamily:"'DM Mono',monospace", fontSize:11, color:C.tx3,
+                  maxWidth:260, wordBreak:"break-all"}}>
+                  {`${window.location.origin}/?order=${user?.uid}`}
+                </div>
+                <div style={{display:"flex", gap:8}}>
+                  <button onClick={()=>{
+                    navigator.clipboard.writeText(`${window.location.origin}/?order=${user?.uid}`)
+                    toast("Link copiado")
+                  }} style={{padding:"8px 14px", borderRadius:9,
+                      border:`1px solid ${C.br}`, background:C.card,
+                      color:C.tx2, fontFamily:"'DM Sans',sans-serif",
+                      fontSize:12, fontWeight:600}}>
+                    📋 Copiar link
+                  </button>
+                  <button onClick={()=>{
+                    const url = encodeURIComponent(`${window.location.origin}/?order=${user?.uid}`)
+                    const txt = encodeURIComponent(`Hola! Podés hacer tu pedido acá: ${window.location.origin}/?order=${user?.uid}`)
+                    window.open(`https://wa.me/?text=${txt}`)
+                  }} style={{padding:"8px 14px", borderRadius:9,
+                      border:"none",
+                      background:"linear-gradient(135deg,#25d366,#128c7e)",
+                      color:"#fff", fontFamily:"'DM Sans',sans-serif",
+                      fontSize:12, fontWeight:700,
+                      boxShadow:"0 4px 14px #25d36644"}}>
+                    🟢 Enviar por WhatsApp
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {orders.length === 0 ? (
+              <div style={{textAlign:"center", padding:"60px 0", color:C.tx3}}>
+                <div style={{width:72, height:72, background:C.vbg,
+                  border:`1px solid ${C.br}`, borderRadius:22,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:32, margin:"0 auto 16px"}}>🛵</div>
+                <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:15,
+                  fontWeight:600, color:C.tx2, marginBottom:6}}>
+                  Sin pedidos pendientes
+                </h3>
+                <p style={{fontSize:13, color:C.tx3}}>
+                  Compartí el link para recibir pedidos
+                </p>
+              </div>
+            ) : (
+              <div style={{display:"flex", flexDirection:"column", gap:10}}>
+                {orders.map(order => {
+                  const ts = (order.created_at?.toDate
+                    ? order.created_at.toDate()
+                    : new Date(order.created_at.seconds*1000))
+                    .toLocaleTimeString("es-AR",{hour:"2-digit",minute:"2-digit"})
+                  return (
+                    <div key={order.id}
+                      style={{background:C.card, border:`1px solid ${C.v}33`,
+                        borderRadius:14, padding:"16px 18px",
+                        boxShadow:`0 0 20px ${C.v}10`}}>
+                      <div style={{display:"flex", justifyContent:"space-between",
+                        alignItems:"center", flexWrap:"wrap", gap:8, marginBottom:10}}>
+                        <div style={{display:"flex", alignItems:"center", gap:10}}>
+                          <div style={{width:36, height:36,
+                            background:`linear-gradient(135deg,${C.v}33,${C.vm}22)`,
+                            border:`1px solid ${C.v}44`, borderRadius:10,
+                            display:"flex", alignItems:"center", justifyContent:"center",
+                            fontFamily:"'Space Grotesk',sans-serif",
+                            fontWeight:700, fontSize:16, color:C.v}}>
+                            {order.customer_name[0].toUpperCase()}
+                          </div>
+                          <div>
+                            <p style={{fontFamily:"'Space Grotesk',sans-serif",
+                              fontSize:15, fontWeight:700, color:C.tx, margin:0}}>
+                              {order.customer_name}
+                            </p>
+                            <p style={{fontFamily:"'DM Mono',monospace",
+                              fontSize:11, color:C.tx3, margin:0}}>{ts}</p>
+                          </div>
+                        </div>
+                        <span style={{fontFamily:"'Space Grotesk',monospace",
+                          fontSize:20, fontWeight:700, color:C.v, letterSpacing:-1}}>
+                          {$(order.total)}
+                        </span>
+                      </div>
+
+                      <div style={{fontSize:13, color:C.tx2, marginBottom:8,
+                        lineHeight:1.6}}>
+                        {(order.items||[]).map(it=>`${it.product_name} ×${it.qty}`).join("  ·  ")}
+                      </div>
+
+                      {order.notes && (
+                        <p style={{fontSize:12, color:C.am,
+                          background:C.ambg, borderRadius:6,
+                          padding:"4px 10px", display:"inline-block",
+                          border:`1px solid ${C.am}33`, marginBottom:10}}>
+                          📝 {order.notes}
+                        </p>
+                      )}
+
+                      <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+                        <button onClick={()=>setOrderToPay(order)}
+                          style={{flex:1, minWidth:120, padding:"10px 0",
+                            background:`linear-gradient(135deg,${C.ok},${C.ok}bb)`,
+                            border:"none", borderRadius:10, color:"#0a1f14",
+                            fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                            fontSize:13, boxShadow:`0 0 14px ${C.ok}44`,
+                            cursor:"pointer"}}>
+                          💳 Cobrar pedido
+                        </button>
+                        <button onClick={()=>cancelOrder(order.id)}
+                          style={{padding:"10px 16px",
+                            background:C.erbg, border:`1px solid ${C.er}33`,
+                            borderRadius:10, color:C.er,
+                            fontFamily:"'DM Sans',sans-serif", fontWeight:600,
+                            fontSize:13, cursor:"pointer"}}>
+                          Cancelar
+                        </button>
+                      </div>
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </div>
+        )}
+
         {/* ── PRODUCTOS VENDIDOS ── */}
         {tab==="vendidos" && (() => {
           const _vg = {}
@@ -2380,6 +2817,9 @@ export default function App() {
         })()}
       </div>
 
+      {orderToPay && <PayModal total={orderToPay.total}
+        onClose={()=>setOrderToPay(null)}
+        onPay={payInfo=>confirmOrder(orderToPay,payInfo)}/>}
       {prodModal && <ProductModal p={prodModal.p} onClose={()=>setProdModal(null)} onSave={saveProd}/>}
       {payModal  && <PayModal total={cartFinal} onClose={()=>{ setPayModal(false) }} onPay={paySale}/>}
       {delModal  && <Del name={delModal.name} onYes={()=>delProd(delModal.id)} onNo={()=>setDelModal(null)}/>}
