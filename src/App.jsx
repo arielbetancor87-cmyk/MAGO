@@ -322,8 +322,10 @@ function OrderPage({uid}) {
   const [sending,  setSending]  = useState(false)
   const [sent,     setSent]     = useState(false)
   const [err,      setErr]      = useState("")
+  const [waNumber, setWaNumber] = useState("")
 
   useEffect(() => {
+    // Load catalog
     getDocs(collection(db, `users/${uid}/products`))
       .then(s => {
         const list = s.docs.map(d => ({id:d.id,...d.data()}))
@@ -332,6 +334,10 @@ function OrderPage({uid}) {
       })
       .catch(() => setErr("No se pudo cargar el catálogo."))
       .finally(() => setLoading(false))
+    // Load business WhatsApp number from user profile
+    getDoc(doc(db, "users", uid))
+      .then(snap => { if (snap.exists()) setWaNumber(snap.data().wa_number || "") })
+      .catch(() => {})
   }, [uid])
 
   const cartTotal = cart.reduce((s,i) => s+i.price*i.qty, 0)
@@ -359,6 +365,26 @@ function OrderPage({uid}) {
         lista:         "minorista",
         created_at:    Timestamp.now(),
       })
+
+      // Build WhatsApp summary message and open it
+      if (waNumber) {
+        const money = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
+        const lines = [
+          "*🍹 NUEVO PEDIDO — MAGO Drinks*",
+          "",
+          `*Cliente:* ${name.trim()}`,
+          notes.trim() ? `*Nota:* ${notes.trim()}` : "",
+          "",
+          "*Pedido:*",
+          ...cart.map(i => `• ${i.name} ×${i.qty} — ${money(i.price*i.qty)}`),
+          "",
+          `*TOTAL: ${money(cartTotal)}*`,
+        ].filter(Boolean)
+        const msg = encodeURIComponent(lines.join("\n"))
+        const phone = waNumber.replace(/[^0-9]/g, "")
+        window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
+      }
+
       setSent(true)
     } catch(e) { setErr("Error al enviar. Intentá de nuevo.") }
     finally { setSending(false) }
@@ -1277,6 +1303,8 @@ export default function App() {
   const [orders,     setOrders]     = useState([])
   const [loadOrders, setLoadOrders] = useState(false)
   const [orderToPay, setOrderToPay] = useState(null)
+  const [waNumber,   setWaNumber]   = useState("")
+  const [waSaving,   setWaSaving]   = useState(false)
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
@@ -1300,6 +1328,7 @@ export default function App() {
         const snap = await getDoc(doc(db, "users", u.uid))
         if (snap.exists()) {
           setUserStatus(snap.data().status || "active")
+          setWaNumber(snap.data().wa_number || "")
           updateDoc(doc(db,"users",u.uid), {last_login:Timestamp.now()}).catch(()=>{})
         } else {
           await setDoc(doc(db,"users",u.uid), {
@@ -1535,6 +1564,16 @@ export default function App() {
     updateDoc(doc(db,`users/${user.uid}/orders`,order.id),{status:"confirmed"})
       .then(()=>setOrders(prev=>prev.filter(o=>o.id!==order.id)))
       .catch(console.warn)
+  }
+
+  const saveWaNumber = async () => {
+    if (!user || waSaving) return
+    setWaSaving(true)
+    try {
+      await updateDoc(doc(db, "users", user.uid), {wa_number: waNumber.trim()})
+      toast("Número de WhatsApp guardado")
+    } catch(e) { toast("Error al guardar", true) }
+    finally { setWaSaving(false) }
   }
 
   const cancelOrder = id => {
@@ -2478,6 +2517,38 @@ export default function App() {
                     🟢 Enviar por WhatsApp
                   </button>
                 </div>
+              </div>
+            </div>
+
+            {/* ── CONFIG WHATSAPP NEGOCIO ── */}
+            <div style={{background:C.card, border:`1px solid ${C.br}`,
+              borderRadius:14, padding:"16px 18px", marginBottom:22, boxShadow:C.sh}}>
+              <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                fontWeight:700, color:C.tx3, letterSpacing:1,
+                textTransform:"uppercase", marginBottom:4}}>
+                🟢 WhatsApp del negocio
+              </p>
+              <p style={{fontSize:12, color:C.tx3, marginBottom:12, lineHeight:1.5}}>
+                Cuando un cliente envía un pedido, se abre WhatsApp con el resumen hacia este número. Incluí código de país sin "+" (ej: 549341...).
+              </p>
+              <div style={{display:"flex", gap:8, flexWrap:"wrap"}}>
+                <input type="text" inputMode="numeric" value={waNumber}
+                  onChange={e=>setWaNumber(e.target.value.replace(/[^0-9]/g,""))}
+                  placeholder="Ej: 5493411234567"
+                  style={{flex:1, minWidth:180, background:C.card2,
+                    border:`1px solid ${C.br}`, borderRadius:9, color:C.tx,
+                    padding:"10px 13px", fontFamily:"'DM Mono',monospace",
+                    fontSize:14, outline:"none"}}
+                  onFocus={e=>e.target.style.borderColor=C.v}
+                  onBlur={e=>e.target.style.borderColor=C.br}/>
+                <button onClick={saveWaNumber} disabled={waSaving}
+                  style={{padding:"10px 20px", border:"none", borderRadius:9,
+                    background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                    color:"#0f0a1e", fontFamily:"'Space Grotesk',sans-serif",
+                    fontWeight:700, fontSize:13, cursor:waSaving?"wait":"pointer",
+                    boxShadow:`0 0 14px ${C.v}33`}}>
+                  {waSaving ? "..." : "Guardar"}
+                </button>
               </div>
             </div>
 
