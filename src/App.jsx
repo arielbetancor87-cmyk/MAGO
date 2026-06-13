@@ -1472,11 +1472,18 @@ export default function App() {
       items:cart.map(i => ({product_name:i.name, product_price:i.price, qty:i.qty})),
       created_at:{seconds:Date.now()/1000, toDate:()=>new Date()},
     }
-    // Optimistic: add to hist if within current range
+    // Optimistic: si la venta es de hoy, extendemos el rango hasta ahora
+    // para que aparezca al instante en el historial
     const saleTs = sale.created_at.seconds * 1000
     const fromMs = new Date(histFrom).getTime()
     const toMs   = new Date(histTo).getTime()
-    if (saleTs >= fromMs && saleTs <= toMs) setSales(prev => [sale,...prev])
+    if (saleTs >= fromMs && saleTs <= toMs) {
+      setSales(prev => [sale,...prev])
+    } else if (saleTs > toMs) {
+      // La venta es posterior al "Hasta" actual → extendemos el rango hasta ahora
+      setHistTo(nowLocalDT())
+      if (saleTs >= fromMs) setSales(prev => [sale,...prev])
+    }
     setCart([]); setPayModal(false); setDiscount("")
     toast("✓ Venta registrada")
     if (mobile) setMView("prods")
@@ -1509,12 +1516,14 @@ export default function App() {
       customer_name:order.customer_name,
       created_at:{seconds:Date.now()/1000,toDate:()=>new Date()},
     }
-    // Optimistic
-    const pad = n=>String(n).padStart(2,"0")
-    const now = new Date()
-    const fmt = d=>`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
-    const nowDT = fmt(now)
-    if (histFrom <= nowDT && nowDT <= histTo) setSales(prev=>[sale,...prev])
+    // Optimistic — extendemos el rango si hace falta para verlo al instante
+    const nowDT = nowLocalDT()
+    if (histFrom <= nowDT && nowDT <= histTo) {
+      setSales(prev=>[sale,...prev])
+    } else if (nowDT > histTo) {
+      setHistTo(nowDT)
+      if (histFrom <= nowDT) setSales(prev=>[sale,...prev])
+    }
     setOrderToPay(null)
     toast("✓ Pedido cobrado")
     // Save to Firebase — replace temp id with real one
