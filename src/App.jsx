@@ -323,6 +323,7 @@ function OrderPage({uid}) {
   const [sent,     setSent]     = useState(false)
   const [err,      setErr]      = useState("")
   const [waNumber, setWaNumber] = useState("")
+  const [waUrlSent,setWaUrlSent]= useState("")
 
   useEffect(() => {
     // Load catalog
@@ -355,6 +356,27 @@ function OrderPage({uid}) {
     if (!name.trim()) return setErr("Ingresá tu nombre para continuar.")
     if (!cart.length)  return setErr("Agregá al menos un producto.")
     setSending(true); setErr("")
+
+    // Build WhatsApp URL BEFORE the await (iOS blocks window.open after async)
+    let waUrl = ""
+    if (waNumber) {
+      const money = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
+      const lines = [
+        "*🍹 NUEVO PEDIDO — MAGO Drinks*",
+        "",
+        `*Cliente:* ${name.trim()}`,
+        notes.trim() ? `*Nota:* ${notes.trim()}` : "",
+        "",
+        "*Pedido:*",
+        ...cart.map(i => `• ${i.name} ×${i.qty} — ${money(i.price*i.qty)}`),
+        "",
+        `*TOTAL: ${money(cartTotal)}*`,
+      ].filter(Boolean)
+      const msg   = encodeURIComponent(lines.join("\n"))
+      const phone = waNumber.replace(/[^0-9]/g, "")
+      waUrl = `https://wa.me/${phone}?text=${msg}`
+    }
+
     try {
       await addDoc(collection(db, `users/${uid}/orders`), {
         customer_name: name.trim(),
@@ -365,27 +387,10 @@ function OrderPage({uid}) {
         lista:         "minorista",
         created_at:    Timestamp.now(),
       })
-
-      // Build WhatsApp summary message and open it
-      if (waNumber) {
-        const money = n => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
-        const lines = [
-          "*🍹 NUEVO PEDIDO — MAGO Drinks*",
-          "",
-          `*Cliente:* ${name.trim()}`,
-          notes.trim() ? `*Nota:* ${notes.trim()}` : "",
-          "",
-          "*Pedido:*",
-          ...cart.map(i => `• ${i.name} ×${i.qty} — ${money(i.price*i.qty)}`),
-          "",
-          `*TOTAL: ${money(cartTotal)}*`,
-        ].filter(Boolean)
-        const msg = encodeURIComponent(lines.join("\n"))
-        const phone = waNumber.replace(/[^0-9]/g, "")
-        window.open(`https://wa.me/${phone}?text=${msg}`, "_blank")
-      }
-
       setSent(true)
+      setWaUrlSent(waUrl)
+      // Redirect to WhatsApp (works on iOS — same tab navigation)
+      if (waUrl) setTimeout(() => { window.location.href = waUrl }, 800)
     } catch(e) { setErr("Error al enviar. Intentá de nuevo.") }
     finally { setSending(false) }
   }
@@ -429,6 +434,18 @@ function OrderPage({uid}) {
             <span>Total</span><span>{$(cartTotal)}</span>
           </div>
         </div>
+
+        {waUrlSent && (
+          <a href={waUrlSent}
+            style={{display:"flex", alignItems:"center", justifyContent:"center",
+              gap:8, marginTop:16, textDecoration:"none",
+              background:"linear-gradient(135deg,#25d366,#128c7e)",
+              borderRadius:12, padding:"14px 0", color:"#fff",
+              fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:15,
+              boxShadow:"0 4px 16px #25d36644"}}>
+            🟢 Enviar pedido por WhatsApp
+          </a>
+        )}
       </div>
     </div>
   )
