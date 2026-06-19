@@ -956,12 +956,15 @@ function StatusScreen({icon, title, body, note, btnLabel, btnColor, onLogout}) {
 /* ════════════════════════════════════════════════════════════════════════
    PRODUCT MODAL
 ════════════════════════════════════════════════════════════════════════ */
-function ProductModal({p, onClose, onSave}) {
+function ProductModal({p, categories=[], onClose, onSave}) {
   const edit = !!p?.id
   const [name,    setName]    = useState(p?.name  || "")
   const [price,   setPrice]   = useState(p?.price || "")
   const [url,     setUrl]     = useState(p?.img   || "")
   const [preview, setPreview] = useState(p?.img   || "")
+  const [category,setCategory]= useState(p?.category || "")
+  const [newCat,  setNewCat]  = useState("")
+  const [addingCat,setAddingCat]= useState(false)
   const [b64,     setB64]     = useState(null)
   const [busy,    setBusy]    = useState(false)
   const [err,     setErr]     = useState("")
@@ -986,7 +989,8 @@ function ProductModal({p, onClose, onSave}) {
     const pr = parseFloat(price)
     if (!pr || pr <= 0) return setErr("Precio inválido")
     if (busy) return setErr("Esperá la foto...")
-    onSave({id:p?.id, name:name.trim(), price:pr, img:b64||url.trim()||FALLBACK})
+    const finalCat = (addingCat ? newCat.trim() : category.trim())
+    onSave({id:p?.id, name:name.trim(), price:pr, img:b64||url.trim()||FALLBACK, category:finalCat})
   }
 
   const I = {
@@ -1042,6 +1046,42 @@ function ProductModal({p, onClose, onSave}) {
           <input type="number" value={price} onChange={e=>setPrice(e.target.value)}
             placeholder="Ej: 8500" min={0} style={I}
             onFocus={focusIn} onBlur={focusOut}/>
+        </div>
+
+        {/* categoría */}
+        <div style={{marginBottom:18}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:6}}>Categoría</label>
+
+          {!addingCat ? (
+            <div style={{display:"flex", gap:8}}>
+              <select value={category} onChange={e=>setCategory(e.target.value)}
+                style={{...I, flex:1, cursor:"pointer", appearance:"none",
+                  backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                  backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center",
+                  paddingRight:36}}>
+                <option value="">Sin categoría</option>
+                {categories.map(c => <option key={c} value={c}>{c}</option>)}
+              </select>
+              <button onClick={()=>{setAddingCat(true);setNewCat("")}}
+                style={{padding:"0 16px", background:C.vbg,
+                  border:`1px solid ${C.v}44`, borderRadius:10, color:C.v,
+                  fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                  fontSize:18, flexShrink:0}}>+</button>
+            </div>
+          ) : (
+            <div style={{display:"flex", gap:8}}>
+              <input type="text" value={newCat} onChange={e=>setNewCat(e.target.value)}
+                placeholder="Nueva categoría..." style={{...I, flex:1}}
+                onFocus={focusIn} onBlur={focusOut} autoFocus/>
+              <button onClick={()=>{setAddingCat(false);setNewCat("")}}
+                style={{padding:"0 16px", background:C.card2,
+                  border:`1px solid ${C.br}`, borderRadius:10, color:C.tx3,
+                  fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                  fontSize:16, flexShrink:0}}>✕</button>
+            </div>
+          )}
         </div>
 
         {/* foto */}
@@ -1468,19 +1508,20 @@ export default function App() {
   const saveProd = p => {
     if (!user || !activeCol) return
     const img     = p.img || FALLBACK
+    const category = p.category || ""
     const colPath = lista === "mayorista"
       ? `users/${user.uid}/products_mayorista`
       : `users/${user.uid}/products`
 
     if (p.id) {
-      setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img} : x))
+      setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img,category} : x))
       setProdModal(null); toast(`"${p.name}" actualizado`)
-      updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img}).catch(console.warn)
+      updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img, category}).catch(console.warn)
     } else {
       const tmp = uid()
-      setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, created_at:{seconds:Date.now()/1000}}])
+      setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, category, created_at:{seconds:Date.now()/1000}}])
       setProdModal(null); toast(`"${p.name}" agregado`)
-      addDoc(activeCol, {name:p.name, price:p.price, img, created_at:Timestamp.now()})
+      addDoc(activeCol, {name:p.name, price:p.price, img, category, created_at:Timestamp.now()})
         .then(r => setActiveProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
         .catch(console.warn)
     }
@@ -1891,78 +1932,116 @@ export default function App() {
             fontWeight:600, color:C.tx2, marginBottom:6}}>Sin productos</h3>
           <p style={{fontSize:13}}>Tocá "+ Agregar" para empezar</p>
         </div>
-      ) : (
-        <div style={{display:"grid",
-          gridTemplateColumns: mobile ? "repeat(4,1fr)" : "repeat(auto-fill,minmax(145px,1fr))",
-          gap: mobile ? 6 : 12}}>
-          {filteredProds.map(p => (
-            <div key={p.id}
-              style={{background:C.card, border:`1px solid ${C.br}`,
-                borderRadius: mobile ? 10 : 16,
-                overflow:"hidden", position:"relative",
-                boxShadow:C.sh, transition:"border-color .2s, box-shadow .2s"}}
-              onMouseEnter={e=>{
-                e.currentTarget.style.borderColor=`${C.v}66`
-                e.currentTarget.style.boxShadow=`0 0 24px ${C.v}22`}}
-              onMouseLeave={e=>{
-                e.currentTarget.style.borderColor=C.br
-                e.currentTarget.style.boxShadow=C.sh}}>
+      ) : (() => {
+        // Group products by category
+        const groups = {}
+        filteredProds.forEach(p => {
+          const cat = p.category || "Sin categoría"
+          if (!groups[cat]) groups[cat] = []
+          groups[cat].push(p)
+        })
+        // Order: named categories alphabetically, "Sin categoría" last
+        const catNames = Object.keys(groups).sort((a,b) => {
+          if (a==="Sin categoría") return 1
+          if (b==="Sin categoría") return -1
+          return a.localeCompare(b)
+        })
 
-              {/* desktop: edit + delete buttons */}
-              {!mobile && (
-                <div style={{position:"absolute", top:7, right:7,
-                  display:"flex", gap:4, zIndex:5}}>
-                  <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
-                    style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
-                      borderRadius:7, color:C.v, width:28, height:28,
-                      display:"flex", alignItems:"center", justifyContent:"center",
-                      fontSize:13}}>✏️</button>
-                  <button onClick={e=>{e.stopPropagation();setDelModal(p)}}
-                    style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
-                      borderRadius:7, color:C.er, width:28, height:28,
-                      display:"flex", alignItems:"center", justifyContent:"center",
-                      fontSize:13}}>🗑️</button>
-                </div>
-              )}
+        const renderCard = p => (
+          <div key={p.id}
+            style={{background:C.card, border:`1px solid ${C.br}`,
+              borderRadius: mobile ? 10 : 16,
+              overflow:"hidden", position:"relative",
+              boxShadow:C.sh, transition:"border-color .2s, box-shadow .2s"}}
+            onMouseEnter={e=>{
+              e.currentTarget.style.borderColor=`${C.v}66`
+              e.currentTarget.style.boxShadow=`0 0 24px ${C.v}22`}}
+            onMouseLeave={e=>{
+              e.currentTarget.style.borderColor=C.br
+              e.currentTarget.style.boxShadow=C.sh}}>
 
-              {/* mobile: small edit button top-left */}
-              {mobile && (
+            {!mobile && (
+              <div style={{position:"absolute", top:7, right:7,
+                display:"flex", gap:4, zIndex:5}}>
                 <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
-                  style={{position:"absolute", top:3, left:3, zIndex:5,
-                    background:"rgba(6,4,17,.65)", border:"none",
-                    borderRadius:5, color:C.v, width:18, height:18,
+                  style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
+                    borderRadius:7, color:C.v, width:28, height:28,
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:9, lineHeight:1}}>✏️</button>
-              )}
+                    fontSize:13}}>✏️</button>
+                <button onClick={e=>{e.stopPropagation();setDelModal(p)}}
+                  style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
+                    borderRadius:7, color:C.er, width:28, height:28,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:13}}>🗑️</button>
+              </div>
+            )}
 
-              <div onClick={() => addItem(p)}
-                style={{cursor:"pointer", WebkitTapHighlightColor:"transparent"}}>
-                <div style={{paddingTop: mobile ? "85%" : "72%",
-                  position:"relative", overflow:"hidden", background:C.vbg}}>
-                  <img src={p.img} alt={p.name}
-                    style={{position:"absolute", inset:0, width:"100%",
-                      height:"100%", objectFit:"cover"}}
-                    onError={e=>{e.target.src=FALLBACK}}/>
-                  <div style={{position:"absolute", inset:0,
-                    background:`linear-gradient(to top, ${C.card}cc 0%, transparent 55%)`}}/>
+            {mobile && (
+              <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
+                style={{position:"absolute", top:3, left:3, zIndex:5,
+                  background:"rgba(6,4,17,.65)", border:"none",
+                  borderRadius:5, color:C.v, width:18, height:18,
+                  display:"flex", alignItems:"center", justifyContent:"center",
+                  fontSize:9, lineHeight:1}}>✏️</button>
+            )}
+
+            <div onClick={() => addItem(p)}
+              style={{cursor:"pointer", WebkitTapHighlightColor:"transparent"}}>
+              <div style={{paddingTop: mobile ? "85%" : "72%",
+                position:"relative", overflow:"hidden", background:C.vbg}}>
+                <img src={p.img} alt={p.name}
+                  style={{position:"absolute", inset:0, width:"100%",
+                    height:"100%", objectFit:"cover"}}
+                  onError={e=>{e.target.src=FALLBACK}}/>
+                <div style={{position:"absolute", inset:0,
+                  background:`linear-gradient(to top, ${C.card}cc 0%, transparent 55%)`}}/>
+              </div>
+              <div style={{padding: mobile ? "5px 5px 6px" : "10px 12px"}}>
+                <div style={{fontSize: mobile ? 9 : 13, fontWeight:600,
+                  color:C.tx, lineHeight:1.25, marginBottom: mobile ? 1 : 4,
+                  overflow:"hidden", display:"-webkit-box",
+                  WebkitLineClamp:2, WebkitBoxOrient:"vertical"}}>
+                  {p.name}
                 </div>
-                <div style={{padding: mobile ? "5px 5px 6px" : "10px 12px"}}>
-                  <div style={{fontSize: mobile ? 9 : 13, fontWeight:600,
-                    color:C.tx, lineHeight:1.25, marginBottom: mobile ? 1 : 4,
-                    overflow:"hidden", display:"-webkit-box",
-                    WebkitLineClamp:2, WebkitBoxOrient:"vertical"}}>
-                    {p.name}
-                  </div>
-                  <div style={{fontFamily:"'Space Grotesk',monospace",
-                    fontSize: mobile ? 10 : 15, fontWeight:700, color:C.v}}>
-                    {$(p.price)}
-                  </div>
+                <div style={{fontFamily:"'Space Grotesk',monospace",
+                  fontSize: mobile ? 10 : 15, fontWeight:700, color:C.v}}>
+                  {$(p.price)}
                 </div>
               </div>
             </div>
-          ))}
-        </div>
-      )}
+          </div>
+        )
+
+        return (
+          <div>
+            {catNames.map(cat => (
+              <div key={cat} style={{marginBottom:22}}>
+                {/* category title */}
+                <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
+                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif",
+                    fontWeight:700, fontSize: mobile ? 14 : 16,
+                    color: cat==="Sin categoría" ? C.tx3 : C.v, margin:0,
+                    whiteSpace:"nowrap"}}>
+                    {cat}
+                  </h3>
+                  <span style={{fontFamily:"'DM Mono',monospace", fontSize:11,
+                    color:C.tx3, background:C.card2, padding:"2px 8px",
+                    borderRadius:20, fontWeight:600}}>
+                    {groups[cat].length}
+                  </span>
+                  <div style={{flex:1, height:1, background:C.br}}/>
+                </div>
+                {/* products grid for this category */}
+                <div style={{display:"grid",
+                  gridTemplateColumns: mobile ? "repeat(4,1fr)" : "repeat(auto-fill,minmax(145px,1fr))",
+                  gap: mobile ? 6 : 12}}>
+                  {groups[cat].map(renderCard)}
+                </div>
+              </div>
+            ))}
+          </div>
+        )
+      })()}
     </div>
   )
 
@@ -2917,7 +2996,9 @@ export default function App() {
       {orderToPay && <PayModal total={orderToPay.total}
         onClose={()=>setOrderToPay(null)}
         onPay={payInfo=>confirmOrder(orderToPay,payInfo)}/>}
-      {prodModal && <ProductModal p={prodModal.p} onClose={()=>setProdModal(null)} onSave={saveProd}/>}
+      {prodModal && <ProductModal p={prodModal.p}
+        categories={[...new Set(activeProds.map(p=>p.category).filter(Boolean))].sort()}
+        onClose={()=>setProdModal(null)} onSave={saveProd}/>}
       {payModal  && <PayModal total={cartFinal} onClose={()=>{ setPayModal(false) }} onPay={paySale}/>}
       {delModal  && <Del name={delModal.name} onYes={()=>delProd(delModal.id)} onNo={()=>setDelModal(null)}/>}
       {delSaleModal && (
