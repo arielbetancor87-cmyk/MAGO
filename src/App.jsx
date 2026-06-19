@@ -479,58 +479,89 @@ function OrderPage({uid}) {
           <div style={{textAlign:"center", padding:80, color:OC.tx3}}>Cargando catálogo...</div>
         ) : err && !prods.length ? (
           <div style={{textAlign:"center", padding:60, color:OC.er}}>{err}</div>
-        ) : (
-          <div style={{display:"grid", gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10}}>
-            {prods.map(p => {
-              const inCart = cart.find(i=>i.id===p.id)
-              return (
-                <div key={p.id} style={{background:OC.card, border:`1px solid ${inCart?OC.v+"66":OC.br}`,
-                  borderRadius:12, overflow:"hidden",
-                  boxShadow: inCart?`0 0 16px ${OC.v}22`:"none",
-                  transition:"border-color .2s, box-shadow .2s"}}>
-                  <div style={{paddingTop:"75%", position:"relative",
-                    overflow:"hidden", background:OC.vbg}}>
-                    <img src={p.img||FALLBACK} alt={p.name}
-                      style={{position:"absolute", inset:0, width:"100%",
-                        height:"100%", objectFit:"cover"}}
-                      onError={e=>e.target.src=FALLBACK}/>
+        ) : (() => {
+          // Group by category
+          const groups = {}
+          prods.forEach(p => {
+            const cat = p.category || "Sin categoría"
+            if (!groups[cat]) groups[cat] = []
+            groups[cat].push(p)
+          })
+          const catNames = Object.keys(groups).sort((a,b) => {
+            if (a==="Sin categoría") return 1
+            if (b==="Sin categoría") return -1
+            return a.localeCompare(b)
+          })
+
+          const renderCard = p => {
+            const inCart = cart.find(i=>i.id===p.id)
+            return (
+              <div key={p.id} style={{background:OC.card, border:`1px solid ${inCart?OC.v+"66":OC.br}`,
+                borderRadius:12, overflow:"hidden",
+                boxShadow: inCart?`0 0 16px ${OC.v}22`:"none",
+                transition:"border-color .2s, box-shadow .2s"}}>
+                <div style={{paddingTop:"75%", position:"relative",
+                  overflow:"hidden", background:OC.vbg}}>
+                  <img src={p.img||FALLBACK} alt={p.name}
+                    style={{position:"absolute", inset:0, width:"100%",
+                      height:"100%", objectFit:"cover"}}
+                    onError={e=>e.target.src=FALLBACK}/>
+                </div>
+                <div style={{padding:"8px 10px"}}>
+                  <div style={{fontSize:12, fontWeight:600, color:OC.tx,
+                    lineHeight:1.3, marginBottom:3}}>{p.name}</div>
+                  <div style={{fontFamily:"'DM Mono',monospace", fontSize:13,
+                    fontWeight:700, color:OC.v, marginBottom:8}}>{$(p.price)}</div>
+                  {!inCart ? (
+                    <button onClick={()=>addItem(p)}
+                      style={{width:"100%", background:`linear-gradient(135deg,${OC.v},${OC.vm})`,
+                        border:"none", borderRadius:7, color:"#0f0a1e",
+                        padding:"7px 0", fontFamily:"'Space Grotesk',sans-serif",
+                        fontWeight:700, fontSize:12, cursor:"pointer"}}>
+                      + Agregar
+                    </button>
+                  ) : (
+                    <div style={{display:"flex", alignItems:"center",
+                      justifyContent:"space-between", gap:4}}>
+                      <button onClick={()=>setQtyO(p.id,inCart.qty-1)}
+                        style={{width:28, height:28, background:OC.card2,
+                          border:`1px solid ${OC.br}`, borderRadius:7,
+                          color:OC.tx2, fontSize:18, cursor:"pointer",
+                          display:"flex", alignItems:"center", justifyContent:"center"}}>−</button>
+                      <span style={{fontFamily:"'DM Mono',monospace",
+                        fontSize:14, color:OC.tx, fontWeight:700}}>{inCart.qty}</span>
+                      <button onClick={()=>setQtyO(p.id,inCart.qty+1)}
+                        style={{width:28, height:28, background:OC.vbg,
+                          border:`1px solid ${OC.v}44`, borderRadius:7,
+                          color:OC.v, fontSize:18, cursor:"pointer",
+                          display:"flex", alignItems:"center", justifyContent:"center"}}>+</button>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )
+          }
+
+          return (
+            <div>
+              {catNames.map(cat => (
+                <div key={cat} style={{marginBottom:24}}>
+                  <div style={{display:"flex", alignItems:"center", gap:10, marginBottom:12}}>
+                    <h3 style={{fontFamily:"'Space Grotesk',sans-serif",
+                      fontWeight:700, fontSize:15,
+                      color: cat==="Sin categoría" ? OC.tx3 : OC.v, margin:0,
+                      whiteSpace:"nowrap"}}>{cat}</h3>
+                    <div style={{flex:1, height:1, background:OC.br}}/>
                   </div>
-                  <div style={{padding:"8px 10px"}}>
-                    <div style={{fontSize:12, fontWeight:600, color:OC.tx,
-                      lineHeight:1.3, marginBottom:3}}>{p.name}</div>
-                    <div style={{fontFamily:"'DM Mono',monospace", fontSize:13,
-                      fontWeight:700, color:OC.v, marginBottom:8}}>{$(p.price)}</div>
-                    {!inCart ? (
-                      <button onClick={()=>addItem(p)}
-                        style={{width:"100%", background:`linear-gradient(135deg,${OC.v},${OC.vm})`,
-                          border:"none", borderRadius:7, color:"#0f0a1e",
-                          padding:"7px 0", fontFamily:"'Space Grotesk',sans-serif",
-                          fontWeight:700, fontSize:12, cursor:"pointer"}}>
-                        + Agregar
-                      </button>
-                    ) : (
-                      <div style={{display:"flex", alignItems:"center",
-                        justifyContent:"space-between", gap:4}}>
-                        <button onClick={()=>setQtyO(p.id,inCart.qty-1)}
-                          style={{width:28, height:28, background:OC.card2,
-                            border:`1px solid ${OC.br}`, borderRadius:7,
-                            color:OC.tx2, fontSize:18, cursor:"pointer",
-                            display:"flex", alignItems:"center", justifyContent:"center"}}>−</button>
-                        <span style={{fontFamily:"'DM Mono',monospace",
-                          fontSize:14, color:OC.tx, fontWeight:700}}>{inCart.qty}</span>
-                        <button onClick={()=>setQtyO(p.id,inCart.qty+1)}
-                          style={{width:28, height:28, background:OC.vbg,
-                            border:`1px solid ${OC.v}44`, borderRadius:7,
-                            color:OC.v, fontSize:18, cursor:"pointer",
-                            display:"flex", alignItems:"center", justifyContent:"center"}}>+</button>
-                      </div>
-                    )}
+                  <div style={{display:"grid",
+                    gridTemplateColumns:"repeat(auto-fill,minmax(140px,1fr))", gap:10}}>
+                    {groups[cat].map(renderCard)}
                   </div>
                 </div>
-              )
-            })}
-          </div>
-        )}
+              ))}
+            </div>
+          )
+        })()}
       </div>
 
       {/* sticky checkout bar */}
