@@ -996,6 +996,9 @@ function ProductModal({p, categories=[], onClose, onSave}) {
   const [category,setCategory]= useState(p?.category || "")
   const [newCat,  setNewCat]  = useState("")
   const [addingCat,setAddingCat]= useState(false)
+  const [stock,   setStock]   = useState(p?.stock ?? "")
+  const [stockMin,setStockMin]= useState(p?.stock_min ?? "")
+  const [unit,    setUnit]    = useState(p?.unit || "unidad")
   const [b64,     setB64]     = useState(null)
   const [busy,    setBusy]    = useState(false)
   const [err,     setErr]     = useState("")
@@ -1021,7 +1024,13 @@ function ProductModal({p, categories=[], onClose, onSave}) {
     if (!pr || pr <= 0) return setErr("Precio inválido")
     if (busy) return setErr("Esperá la foto...")
     const finalCat = (addingCat ? newCat.trim() : category.trim())
-    onSave({id:p?.id, name:name.trim(), price:pr, img:b64||url.trim()||FALLBACK, category:finalCat})
+    onSave({
+      id:p?.id, name:name.trim(), price:pr,
+      img:b64||url.trim()||FALLBACK, category:finalCat,
+      stock: stock==="" ? null : parseFloat(stock)||0,
+      stock_min: stockMin==="" ? 0 : parseFloat(stockMin)||0,
+      unit: unit||"unidad",
+    })
   }
 
   const I = {
@@ -1113,6 +1122,55 @@ function ProductModal({p, categories=[], onClose, onSave}) {
                   fontSize:16, flexShrink:0}}>✕</button>
             </div>
           )}
+        </div>
+
+        {/* stock */}
+        <div style={{marginBottom:18, background:C.card2, borderRadius:12,
+          padding:"14px 14px 16px", border:`1px solid ${C.br}`}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:12}}>📦 Inventario (opcional)</label>
+          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+            <div>
+              <label style={{display:"block", fontSize:10, fontWeight:600,
+                color:C.tx3, marginBottom:5}}>Stock actual</label>
+              <input type="text" inputMode="numeric" value={stock}
+                onChange={e=>setStock(e.target.value.replace(/[^0-9]/g,""))}
+                placeholder="Ej: 24"
+                style={{...I, background:C.card, fontSize:14, padding:"10px 12px"}}
+                onFocus={focusIn} onBlur={focusOut}/>
+            </div>
+            <div>
+              <label style={{display:"block", fontSize:10, fontWeight:600,
+                color:C.tx3, marginBottom:5}}>Stock mínimo</label>
+              <input type="text" inputMode="numeric" value={stockMin}
+                onChange={e=>setStockMin(e.target.value.replace(/[^0-9]/g,""))}
+                placeholder="Ej: 5"
+                style={{...I, background:C.card, fontSize:14, padding:"10px 12px"}}
+                onFocus={focusIn} onBlur={focusOut}/>
+            </div>
+          </div>
+          <div>
+            <label style={{display:"block", fontSize:10, fontWeight:600,
+              color:C.tx3, marginBottom:5}}>Unidad</label>
+            <select value={unit} onChange={e=>setUnit(e.target.value)}
+              style={{...I, background:C.card, fontSize:14, padding:"10px 12px",
+                cursor:"pointer", appearance:"none",
+                backgroundImage:`url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`,
+                backgroundRepeat:"no-repeat", backgroundPosition:"right 14px center",
+                paddingRight:36}}>
+              <option value="unidad">Unidad</option>
+              <option value="caja">Caja</option>
+              <option value="paquete">Paquete</option>
+              <option value="botella">Botella</option>
+              <option value="pack">Pack</option>
+              <option value="litro">Litro</option>
+              <option value="kg">Kilo</option>
+            </select>
+          </div>
+          <p style={{fontSize:11, color:C.tx3, marginTop:10, lineHeight:1.5}}>
+            Dejá el stock vacío si este producto no maneja inventario.
+          </p>
         </div>
 
         {/* foto */}
@@ -1538,21 +1596,26 @@ export default function App() {
   /* save product — optimistic + real-time listener updates UI automatically */
   const saveProd = p => {
     if (!user || !activeCol) return
-    const img     = p.img || FALLBACK
+    const img      = p.img || FALLBACK
     const category = p.category || ""
+    const stockData = {
+      stock:     p.stock ?? null,
+      stock_min: p.stock_min ?? 0,
+      unit:      p.unit || "unidad",
+    }
     const colPath = lista === "mayorista"
       ? `users/${user.uid}/products_mayorista`
       : `users/${user.uid}/products`
 
     if (p.id) {
-      setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img,category} : x))
+      setActiveProds(prev => prev.map(x => x.id===p.id ? {...x,...p,img,category,...stockData} : x))
       setProdModal(null); toast(`"${p.name}" actualizado`)
-      updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img, category}).catch(console.warn)
+      updateDoc(doc(db, colPath, p.id), {name:p.name, price:p.price, img, category, ...stockData}).catch(console.warn)
     } else {
       const tmp = uid()
-      setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, category, created_at:{seconds:Date.now()/1000}}])
+      setActiveProds(prev => [...prev, {id:tmp, name:p.name, price:p.price, img, category, ...stockData, created_at:{seconds:Date.now()/1000}}])
       setProdModal(null); toast(`"${p.name}" agregado`)
-      addDoc(activeCol, {name:p.name, price:p.price, img, category, created_at:Timestamp.now()})
+      addDoc(activeCol, {name:p.name, price:p.price, img, category, ...stockData, created_at:Timestamp.now()})
         .then(r => setActiveProds(prev => prev.map(x => x.id===tmp ? {...x,id:r.id} : x)))
         .catch(console.warn)
     }
@@ -1570,10 +1633,36 @@ export default function App() {
     if (!id.startsWith("_")) deleteDoc(doc(db, colPath, id)).catch(console.warn)
   }
 
+  // ── STOCK: descuenta (sign=-1) o devuelve (sign=+1) según items vendidos ──
+  const applyStockChange = (items, listaVenta, sign) => {
+    if (!user) return
+    // Solo la lista minorista/mayorista correspondiente maneja su stock
+    const colPath = listaVenta === "mayorista"
+      ? `users/${user.uid}/products_mayorista`
+      : `users/${user.uid}/products`
+    const setter  = listaVenta === "mayorista" ? setMayorProds : setProds
+    const current = listaVenta === "mayorista" ? mayorProds : prods
+
+    items.forEach(it => {
+      // Buscar el producto por nombre (los items guardan product_name)
+      const prod = current.find(p => p.name === it.product_name)
+      if (!prod || prod.stock === null || prod.stock === undefined) return
+      const newStock = (prod.stock || 0) + sign * it.qty
+      // Optimistic UI
+      setter(prev => prev.map(p => p.id===prod.id ? {...p, stock:newStock} : p))
+      // Firebase
+      if (!String(prod.id).startsWith("_"))
+        updateDoc(doc(db, colPath, prod.id), {stock:newStock}).catch(console.warn)
+    })
+  }
+
   const delSale = id => {
     if (!user) return
+    // Devolver stock antes de eliminar
+    const saleToDel = sales.find(s => s.id===id)
+    if (saleToDel) applyStockChange(saleToDel.items||[], saleToDel.lista||"minorista", +1)
     setSales(prev => prev.filter(s => s.id!==id))
-    setDelSaleModal(null); toast("Venta eliminada")
+    setDelSaleModal(null); toast("Venta eliminada — stock devuelto")
     if (!id.startsWith("_")) deleteDoc(doc(db,`users/${user.uid}/sales`,id)).catch(console.warn)
   }
 
@@ -1590,6 +1679,8 @@ export default function App() {
       items:cart.map(i => ({product_name:i.name, product_price:i.price, qty:i.qty})),
       created_at:{seconds:Date.now()/1000, toDate:()=>new Date()},
     }
+    // Descontar stock de los productos vendidos
+    applyStockChange(sale.items, lista, -1)
     // Optimistic: si la venta es de hoy, extendemos el rango hasta ahora
     // para que aparezca al instante en el historial
     const saleTs = sale.created_at.seconds * 1000
@@ -1598,7 +1689,6 @@ export default function App() {
     if (saleTs >= fromMs && saleTs <= toMs) {
       setSales(prev => [sale,...prev])
     } else if (saleTs > toMs) {
-      // La venta es posterior al "Hasta" actual → extendemos el rango hasta ahora
       setHistTo(nowLocalDT())
       if (saleTs >= fromMs) setSales(prev => [sale,...prev])
     }
@@ -1634,6 +1724,8 @@ export default function App() {
       customer_name:order.customer_name,
       created_at:{seconds:Date.now()/1000,toDate:()=>new Date()},
     }
+    // Descontar stock del pedido cobrado
+    applyStockChange(order.items||[], order.lista||"minorista", -1)
     // Optimistic — extendemos el rango si hace falta para verlo al instante
     const nowDT = nowLocalDT()
     if (histFrom <= nowDT && nowDT <= histTo) {
@@ -2026,6 +2118,22 @@ export default function App() {
                   onError={e=>{e.target.src=FALLBACK}}/>
                 <div style={{position:"absolute", inset:0,
                   background:`linear-gradient(to top, ${C.card}cc 0%, transparent 55%)`}}/>
+                {/* stock badge */}
+                {p.stock !== null && p.stock !== undefined && (() => {
+                  const noStock  = p.stock <= 0
+                  const lowStock = !noStock && p.stock <= (p.stock_min||0)
+                  const bg = noStock ? C.er : lowStock ? C.am : C.ok
+                  return (
+                    <div style={{position:"absolute", bottom:5, right:5,
+                      background:`${bg}dd`, color:"#0f0a1e",
+                      borderRadius:6, padding: mobile ? "1px 5px" : "2px 8px",
+                      fontFamily:"'Space Grotesk',monospace",
+                      fontSize: mobile ? 9 : 11, fontWeight:700,
+                      lineHeight:1.3, zIndex:3}}>
+                      {noStock ? "SIN STOCK" : `${p.stock}`}
+                    </div>
+                  )
+                })()}
               </div>
               <div style={{padding: mobile ? "5px 5px 6px" : "10px 12px"}}>
                 <div style={{fontSize: mobile ? 9 : 13, fontWeight:600,
