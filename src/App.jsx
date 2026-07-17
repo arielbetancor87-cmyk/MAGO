@@ -1593,6 +1593,11 @@ export default function App() {
   const [orders,     setOrders]     = useState([])
   const [loadOrders, setLoadOrders] = useState(false)
   const [orderToPay, setOrderToPay] = useState(null)
+  const [movements,  setMovements]  = useState([])
+  const [loadMov,    setLoadMov]    = useState(false)
+  const [movFrom,    setMovFrom]    = useState(startOfDayDT)
+  const [movTo,      setMovTo]      = useState(nowLocalDT)
+  const [movType,    setMovType]    = useState("all")
   const [waNumber,   setWaNumber]   = useState("")
   const [waSaving,   setWaSaving]   = useState(false)
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
@@ -1688,6 +1693,18 @@ export default function App() {
       .then(list => setVendSales(list))
       .catch(console.warn).finally(() => setLoadV(false))
   }, [user, tab, vendFrom, vendTo])
+
+  // Load inventory movements by date range
+  useEffect(() => {
+    if (!user || tab!=="inventario" || isAdmin) return
+    setLoadMov(true)
+    queryByRange(collection(db, `users/${user.uid}/stock_movements`), movFrom, movTo)
+      .then(list => {
+        list.sort((a,b)=>(b.created_at?.seconds||0)-(a.created_at?.seconds||0))
+        setMovements(list)
+      })
+      .catch(console.warn).finally(() => setLoadMov(false))
+  }, [user, tab, movFrom, movTo])
 
   // Load pending orders — real-time listener
   useEffect(() => {
@@ -1819,12 +1836,25 @@ export default function App() {
       // Buscar el producto por nombre (los items guardan product_name)
       const prod = current.find(p => p.name === it.product_name)
       if (!prod || prod.stock === null || prod.stock === undefined) return
-      const newStock = (prod.stock || 0) + sign * it.qty
+      const prev = prod.stock || 0
+      const newStock = prev + sign * it.qty
       // Optimistic UI
       setter(prev => prev.map(p => p.id===prod.id ? {...p, stock:newStock} : p))
       // Firebase
       if (!String(prod.id).startsWith("_"))
         updateDoc(doc(db, colPath, prod.id), {stock:newStock}).catch(console.warn)
+      // Registrar movimiento (venta = salida, anulación = devolución)
+      addDoc(collection(db, `users/${user.uid}/stock_movements`), {
+        product_id:   prod.id,
+        product_name: prod.name,
+        lista:        listaVenta,
+        type:         sign < 0 ? "venta" : "devolucion",
+        qty:          it.qty,
+        stock_prev:   prev,
+        stock_next:   newStock,
+        reason:       sign < 0 ? "Venta" : "Anulación de venta",
+        created_at:   Timestamp.now(),
+      }).catch(console.warn)
     })
   }
 
@@ -2559,7 +2589,7 @@ export default function App() {
             filter:"drop-shadow(0 0 12px rgba(167,139,250,0.3))"}}/>
 
           <div style={{display:"flex", alignItems:"center", gap:6}}>
-            {[["caja","🏪","CAJA"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"]].map(([k,ic,l]) => (
+            {[["caja","🏪","CAJA"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"],["inventario","📋","INVENTARIO"]].map(([k,ic,l]) => (
               <button key={k} onClick={() => setTab(k)}
                 style={{
                   background: tab===k ? C.vbg : "transparent",
@@ -3309,6 +3339,156 @@ export default function App() {
                     </div>
                   </div>
 
+                </div>
+              )}
+            </div>
+          )
+        })()}
+
+        {/* ── HISTORIAL DE INVENTARIO ── */}
+        {tab==="inventario" && (() => {
+          const typeCfg = {
+            ingreso:    {l:"Ingreso",    i:"➕", c:C.ok},
+            salida:     {l:"Salida",     i:"➖", c:C.er},
+            ajuste:     {l:"Ajuste",     i:"✏️", c:C.bl},
+            venta:      {l:"Venta",      i:"🛒", c:C.am},
+            devolucion: {l:"Devolución", i:"↩",  c:C.v},
+          }
+          const filtered = movType==="all" ? movements : movements.filter(m => m.type===movType)
+
+          return (
+            <div style={{maxWidth:880, margin:"0 auto", padding:"24px 16px"}}>
+              <div style={{marginBottom:20}}>
+                <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
+                  fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                  Historial de Inventario
+                </h2>
+                <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
+                  {filtered.length} movimiento{filtered.length!==1?"s":""} en el rango
+                </p>
+              </div>
+
+              {/* filtro rango */}
+              <div style={{background:C.card, border:`1px solid ${C.br}`,
+                borderRadius:14, padding:"14px 16px", marginBottom:14, boxShadow:C.sh}}>
+                <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                  fontWeight:700, color:C.tx3, letterSpacing:1,
+                  textTransform:"uppercase", marginBottom:12}}>Rango de consulta</p>
+                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                  {[
+                    {label:"Desde", val:movFrom, set:setMovFrom},
+                    {label:"Hasta", val:movTo,   set:setMovTo},
+                  ].map(({label,val,set}) => (
+                    <div key={label}>
+                      <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+                        fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
+                        textTransform:"uppercase", marginBottom:6}}>{label}</label>
+                      <input type="datetime-local" value={val} onChange={e=>set(e.target.value)}
+                        style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
+                          borderRadius:9, color:C.tx, padding:"9px 12px",
+                          fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
+                          outline:"none", colorScheme:"dark"}}
+                        onFocus={e=>e.target.style.borderColor=C.v}
+                        onBlur={e=>e.target.style.borderColor=C.br}/>
+                    </div>
+                  ))}
+                </div>
+                <div style={{display:"flex", gap:8, marginTop:12, flexWrap:"wrap"}}>
+                  <button onClick={()=>{setMovFrom(startOfDayDT());setMovTo(nowLocalDT())}}
+                    style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                      background:C.card2, color:C.tx2,
+                      fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                    Hoy
+                  </button>
+                  <button onClick={()=>{
+                    const d=new Date(); d.setDate(d.getDate()-7)
+                    const pad=n=>String(n).padStart(2,"0")
+                    setMovFrom(`${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T00:00`)
+                    setMovTo(nowLocalDT())
+                  }} style={{padding:"7px 14px", borderRadius:8, border:`1px solid ${C.br}`,
+                      background:C.card2, color:C.tx2,
+                      fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                    Últimos 7 días
+                  </button>
+                </div>
+              </div>
+
+              {/* filtro tipo */}
+              <div style={{display:"flex", gap:6, marginBottom:20, flexWrap:"wrap"}}>
+                {[["all","Todos"],["ingreso","Ingresos"],["salida","Salidas"],
+                  ["ajuste","Ajustes"],["venta","Ventas"],["devolucion","Devoluciones"]].map(([k,l]) => (
+                  <button key={k} onClick={()=>setMovType(k)}
+                    style={{padding:"7px 13px", borderRadius:8,
+                      border:`1px solid ${movType===k ? C.v : C.br}`,
+                      background: movType===k ? C.vbg : C.card,
+                      color: movType===k ? C.v : C.tx2,
+                      fontFamily:"'DM Sans',sans-serif", fontWeight:600, fontSize:12}}>
+                    {l}
+                  </button>
+                ))}
+              </div>
+
+              {loadMov ? (
+                <div style={{display:"flex", justifyContent:"center", padding:60}}><Spin s={28}/></div>
+              ) : filtered.length===0 ? (
+                <div style={{textAlign:"center", padding:"50px 0", color:C.tx3}}>
+                  <div style={{width:68, height:68, background:C.vbg,
+                    border:`1px solid ${C.br}`, borderRadius:20,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:30, margin:"0 auto 14px"}}>📋</div>
+                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:15,
+                    fontWeight:600, color:C.tx2}}>Sin movimientos en este rango</h3>
+                </div>
+              ) : (
+                <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                  {filtered.map(m => {
+                    const cfg = typeCfg[m.type] || {l:m.type, i:"•", c:C.tx2}
+                    const ts = (m.created_at?.toDate
+                      ? m.created_at.toDate()
+                      : new Date(m.created_at.seconds*1000))
+                      .toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+                    const diff = m.stock_next - m.stock_prev
+                    return (
+                      <div key={m.id}
+                        style={{background:C.card, border:`1px solid ${C.br}`,
+                          borderRadius:12, padding:"14px 16px", boxShadow:C.sh}}>
+                        <div style={{display:"flex", justifyContent:"space-between",
+                          alignItems:"center", flexWrap:"wrap", gap:8}}>
+                          <div style={{display:"flex", alignItems:"center", gap:12}}>
+                            <div style={{width:38, height:38, flexShrink:0,
+                              background:`${cfg.c}18`, border:`1px solid ${cfg.c}44`,
+                              borderRadius:10, display:"flex", alignItems:"center",
+                              justifyContent:"center", fontSize:16}}>{cfg.i}</div>
+                            <div>
+                              <p style={{fontFamily:"'Space Grotesk',sans-serif",
+                                fontSize:14, fontWeight:600, color:C.tx, margin:0}}>
+                                {m.product_name}
+                                {m.lista==="mayorista" && (
+                                  <span style={{fontSize:10, color:C.am, marginLeft:6,
+                                    fontWeight:700}}>📦 MAY</span>
+                                )}
+                              </p>
+                              <p style={{fontSize:12, color:C.tx3, margin:0}}>
+                                <span style={{color:cfg.c, fontWeight:600}}>{cfg.l}</span>
+                                {" · "}{m.reason}{" · "}{ts}
+                              </p>
+                            </div>
+                          </div>
+                          <div style={{textAlign:"right"}}>
+                            <div style={{fontFamily:"'Space Grotesk',monospace",
+                              fontSize:16, fontWeight:700,
+                              color: diff>=0 ? C.ok : C.er, letterSpacing:-.5}}>
+                              {diff>=0?"+":""}{diff}
+                            </div>
+                            <div style={{fontFamily:"'DM Mono',monospace",
+                              fontSize:11, color:C.tx3}}>
+                              {m.stock_prev} → {m.stock_next}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
                 </div>
               )}
             </div>
