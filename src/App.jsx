@@ -2869,6 +2869,7 @@ export default function App() {
     <>
       <style>{CSS}</style>
       <div style={{minHeight:"100vh", background:C.bg, color:C.tx,
+        paddingBottom: mobile && tab!=="caja" ? 62 : 0,
         backgroundImage:`radial-gradient(ellipse at 50% -20%, rgba(167,139,250,0.06) 0%, transparent 55%)`}}>
 
         {/* ── HEADER ── */}
@@ -2881,7 +2882,8 @@ export default function App() {
             filter:"drop-shadow(0 0 12px rgba(167,139,250,0.3))"}}/>
 
           <div style={{display:"flex", alignItems:"center", gap:6}}>
-            {[["caja","🏪","CAJA"],["dash","📈","PANEL"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"],["inventario","📋","INVENTARIO"]].map(([k,ic,l]) => (
+            {/* tabs — solo en desktop */}
+            {!mobile && [["caja","🏪","CAJA"],["dash","📈","PANEL"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"],["inventario","📋","INVENTARIO"]].map(([k,ic,l]) => (
               <button key={k} onClick={() => setTab(k)}
                 style={{
                   background: tab===k ? C.vbg : "transparent",
@@ -2898,7 +2900,8 @@ export default function App() {
 
             {/* user chip */}
             <div style={{display:"flex", alignItems:"center", gap:8,
-              marginLeft:4, paddingLeft:10, borderLeft:`1px solid ${C.br}`}}>
+              marginLeft: mobile ? 0 : 4, paddingLeft: mobile ? 0 : 10,
+              borderLeft: mobile ? "none" : `1px solid ${C.br}`}}>
               <div style={{width:30, height:30,
                 background:`linear-gradient(135deg,${C.v}44,${C.vm}22)`,
                 border:`1px solid ${C.v}44`,
@@ -2918,6 +2921,34 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* ── BOTTOM NAV — solo en celular ── */}
+        {mobile && (
+          <div style={{position:"fixed", bottom:0, left:0, right:0, zIndex:200,
+            background:`${C.card}f5`, borderTop:`1px solid ${C.br}`,
+            display:"flex", justifyContent:"space-around", alignItems:"center",
+            padding:"6px 4px 8px",
+            boxShadow:"0 -4px 20px rgba(0,0,0,.4)",
+            backdropFilter:"blur(8px)"}}>
+            {[["caja","🏪","Caja"],["dash","📈","Panel"],["pedidos","🛵","Pedidos"],
+              ["hist","📊","Ventas"],["vendidos","📦","Top"],["inventario","📋","Stock"]].map(([k,ic,l]) => (
+              <button key={k} onClick={()=>setTab(k)}
+                style={{background:"none", border:"none",
+                  display:"flex", flexDirection:"column", alignItems:"center",
+                  gap:2, padding:"4px 2px", flex:1,
+                  color: tab===k ? C.v : C.tx3}}>
+                <span style={{fontSize:19, filter: tab===k ? "none" : "grayscale(0.4) opacity(0.7)",
+                  transition:"filter .15s"}}>{ic}</span>
+                <span style={{fontFamily:"'Space Grotesk',sans-serif",
+                  fontSize:9, fontWeight:700, letterSpacing:.2}}>{l}</span>
+                {tab===k && (
+                  <div style={{position:"absolute", bottom:2, width:4, height:4,
+                    borderRadius:"50%", background:C.v}}/>
+                )}
+              </button>
+            ))}
+          </div>
+        )}
 
         {/* ── CAJA ── */}
         {/* ── PANEL / DASHBOARD ── */}
@@ -3153,7 +3184,7 @@ export default function App() {
 
         {tab==="caja" && (
           mobile ? (
-            <div style={{height:"calc(100vh - 62px)", display:"flex", flexDirection:"column"}}>
+            <div style={{height:"calc(100vh - 62px - 58px)", display:"flex", flexDirection:"column"}}>
               <div style={{display:"flex", background:C.card, borderBottom:`1px solid ${C.br}`}}>
                 {[["prods","🏪 Productos"],["cart",`🛒 Carrito (${cartQty})`]].map(([v,l]) => (
                   <button key={v} onClick={() => setMView(v)}
