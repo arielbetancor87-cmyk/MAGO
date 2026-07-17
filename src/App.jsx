@@ -999,6 +999,7 @@ function ProductModal({p, categories=[], onClose, onSave}) {
   const [stock,   setStock]   = useState(p?.stock ?? "")
   const [stockMin,setStockMin]= useState(p?.stock_min ?? "")
   const [unit,    setUnit]    = useState(p?.unit || "unidad")
+  const [barcode, setBarcode] = useState(p?.barcode || "")
   const [b64,     setB64]     = useState(null)
   const [busy,    setBusy]    = useState(false)
   const [err,     setErr]     = useState("")
@@ -1018,6 +1019,13 @@ function ProductModal({p, categories=[], onClose, onSave}) {
 
   useEffect(() => () => { if (blobRef.current) URL.revokeObjectURL(blobRef.current) }, [])
 
+  const genBarcode = () => {
+    // Genera un código EAN-13 numérico aleatorio (13 dígitos)
+    let code = "200" // prefijo de uso interno
+    for (let i=0; i<10; i++) code += Math.floor(Math.random()*10)
+    setBarcode(code)
+  }
+
   const save = () => {
     if (!name.trim()) return setErr("Nombre requerido")
     const pr = parseFloat(price)
@@ -1030,6 +1038,7 @@ function ProductModal({p, categories=[], onClose, onSave}) {
       stock: stock==="" ? null : parseFloat(stock)||0,
       stock_min: stockMin==="" ? 0 : parseFloat(stockMin)||0,
       unit: unit||"unidad",
+      barcode: barcode.trim(),
     })
   }
 
@@ -1170,6 +1179,30 @@ function ProductModal({p, categories=[], onClose, onSave}) {
           </div>
           <p style={{fontSize:11, color:C.tx3, marginTop:10, lineHeight:1.5}}>
             Dejá el stock vacío si este producto no maneja inventario.
+          </p>
+        </div>
+
+        {/* código de barras */}
+        <div style={{marginBottom:18}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:6}}>Código de barras</label>
+          <div style={{display:"flex", gap:8}}>
+            <input type="text" inputMode="numeric" value={barcode}
+              onChange={e=>setBarcode(e.target.value.replace(/[^0-9]/g,""))}
+              placeholder="Escaneá, escribí o generá..."
+              style={{...I, flex:1, fontFamily:"'DM Mono',monospace"}}
+              onFocus={focusIn} onBlur={focusOut}/>
+            <button onClick={genBarcode} type="button"
+              style={{padding:"0 16px", background:C.vbg,
+                border:`1px solid ${C.v}44`, borderRadius:10, color:C.v,
+                fontFamily:"'DM Sans',sans-serif", fontWeight:700,
+                fontSize:12, flexShrink:0, whiteSpace:"nowrap"}}>
+              🎲 Generar
+            </button>
+          </div>
+          <p style={{fontSize:11, color:C.tx3, marginTop:8, lineHeight:1.5}}>
+            Si tenés un lector USB/Bluetooth, hacé clic en el campo y escaneá el producto.
           </p>
         </div>
 
@@ -1758,7 +1791,10 @@ export default function App() {
   const cartFinal   = cartTotal - discountAmt
   const cartQty     = cart.reduce((s,i) => s + i.qty, 0)
 
-  const filteredProds = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
+  const filteredProds = activeProds.filter(p => {
+    const q = search.toLowerCase()
+    return p.name.toLowerCase().includes(q) || (p.barcode||"").includes(search.trim())
+  })
 
   const addItem = p => {
     // Bloqueo de venta sin stock (si está activado en config)
@@ -1788,6 +1824,44 @@ export default function App() {
     )
   }
 
+  // ── Lector de código de barras USB/Bluetooth ────────────────────────────
+  // Los lectores actúan como teclado: "tipean" el código muy rápido y mandan
+  // Enter. Detectamos ráfagas de teclas seguidas de Enter para buscar producto.
+  const scanBufferRef = useRef("")
+  const scanTimeRef   = useRef(0)
+  useEffect(() => {
+    if (!user || isAdmin || tab!=="caja") return
+    const onKey = (e) => {
+      // Ignorar si el foco está en un input/textarea (escritura normal)
+      const el = document.activeElement
+      const typing = el && (el.tagName==="INPUT" || el.tagName==="TEXTAREA" || el.tagName==="SELECT")
+      if (typing) return
+
+      const now = Date.now()
+      // Si pasó mucho tiempo desde la última tecla, reiniciar buffer
+      if (now - scanTimeRef.current > 100) scanBufferRef.current = ""
+      scanTimeRef.current = now
+
+      if (e.key === "Enter") {
+        const code = scanBufferRef.current.trim()
+        scanBufferRef.current = ""
+        if (code.length >= 6) {
+          // Buscar producto por código de barras en la lista activa
+          const found = activeProds.find(p => p.barcode === code)
+          if (found) {
+            addItem(found)
+          } else {
+            toast(`Código no encontrado: ${code}`, true)
+          }
+        }
+      } else if (e.key.length === 1) {
+        scanBufferRef.current += e.key
+      }
+    }
+    window.addEventListener("keydown", onKey)
+    return () => window.removeEventListener("keydown", onKey)
+  }, [user, tab, activeProds, blockNoStock, cart])
+
   /* save product — optimistic + real-time listener updates UI automatically */
   const saveProd = p => {
     if (!user || !activeCol) return
@@ -1797,6 +1871,12 @@ export default function App() {
       stock:     p.stock ?? null,
       stock_min: p.stock_min ?? 0,
       unit:      p.unit || "unidad",
+      barcode:   p.barcode || "",
+    }
+    // Validar que no exista otro producto con el mismo código de barras
+    if (p.barcode) {
+      const dup = activeProds.find(x => x.barcode === p.barcode && x.id !== p.id)
+      if (dup) { toast(`El código ya lo usa "${dup.name}"`, true); return }
     }
     const colPath = lista === "mayorista"
       ? `users/${user.uid}/products_mayorista`
