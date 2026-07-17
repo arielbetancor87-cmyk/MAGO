@@ -1000,6 +1000,7 @@ function ProductModal({p, categories=[], onClose, onSave}) {
   const [stockMin,setStockMin]= useState(p?.stock_min ?? "")
   const [unit,    setUnit]    = useState(p?.unit || "unidad")
   const [barcode, setBarcode] = useState(p?.barcode || "")
+  const [scanning, setScanning] = useState(false)
   const [b64,     setB64]     = useState(null)
   const [busy,    setBusy]    = useState(false)
   const [err,     setErr]     = useState("")
@@ -1187,24 +1188,37 @@ function ProductModal({p, categories=[], onClose, onSave}) {
           <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
             fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
             textTransform:"uppercase", marginBottom:6}}>Código de barras</label>
-          <div style={{display:"flex", gap:8}}>
+          <div style={{display:"flex", gap:8, marginBottom:8}}>
             <input type="text" inputMode="numeric" value={barcode}
               onChange={e=>setBarcode(e.target.value.replace(/[^0-9]/g,""))}
               placeholder="Escaneá, escribí o generá..."
               style={{...I, flex:1, fontFamily:"'DM Mono',monospace"}}
               onFocus={focusIn} onBlur={focusOut}/>
-            <button onClick={genBarcode} type="button"
-              style={{padding:"0 16px", background:C.vbg,
-                border:`1px solid ${C.v}44`, borderRadius:10, color:C.v,
+            <button onClick={()=>setScanning(true)} type="button"
+              style={{padding:"0 15px", background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                border:"none", borderRadius:10, color:"#0f0a1e",
                 fontFamily:"'DM Sans',sans-serif", fontWeight:700,
-                fontSize:12, flexShrink:0, whiteSpace:"nowrap"}}>
-              🎲 Generar
+                fontSize:13, flexShrink:0, whiteSpace:"nowrap"}}>
+              📷
             </button>
           </div>
+          <button onClick={genBarcode} type="button"
+            style={{width:"100%", padding:"9px 0", background:C.vbg,
+              border:`1px solid ${C.v}44`, borderRadius:10, color:C.v,
+              fontFamily:"'DM Sans',sans-serif", fontWeight:700,
+              fontSize:13}}>
+            🎲 Generar código automático
+          </button>
           <p style={{fontSize:11, color:C.tx3, marginTop:8, lineHeight:1.5}}>
-            Si tenés un lector USB/Bluetooth, hacé clic en el campo y escaneá el producto.
+            Tocá 📷 para escanear con la cámara, o usá un lector USB/Bluetooth.
           </p>
         </div>
+
+        {scanning && (
+          <ScannerModal
+            onClose={()=>setScanning(false)}
+            onScan={(code)=>{ setBarcode(String(code).replace(/[^0-9]/g,"")); setScanning(false) }}/>
+        )}
 
         {/* foto */}
         <div style={{marginBottom:20}}>
