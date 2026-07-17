@@ -2870,7 +2870,8 @@ export default function App() {
   return (
     <>
       <style>{CSS}</style>
-      <div style={{minHeight:"100vh", background:C.bg, color:C.tx,
+      <div style={{minHeight:"100vh", width:"100%", maxWidth:"100vw", overflowX:"hidden",
+        background:C.bg, color:C.tx,
         paddingBottom: mobile && tab!=="caja" ? 62 : 0,
         backgroundImage:`radial-gradient(ellipse at 50% -20%, rgba(167,139,250,0.06) 0%, transparent 55%)`}}>
 
@@ -3287,7 +3288,7 @@ export default function App() {
                   {label:"Desde", val:histFrom, set:setHistFrom},
                   {label:"Hasta", val:histTo,   set:setHistTo},
                 ].map(({label,val,set}) => (
-                  <div key={label}>
+                  <div key={label} style={{minWidth:0}}>
                     <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
                       fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
                       textTransform:"uppercase", marginBottom:6}}>{label}</label>
@@ -3295,7 +3296,7 @@ export default function App() {
                       style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
                         borderRadius:9, color:C.tx, padding:"9px 12px",
                         fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
-                        outline:"none", colorScheme:"dark"}}
+                        outline:"none", colorScheme:"dark", minWidth:0, maxWidth:"100%"}}
                       onFocus={e=>e.target.style.borderColor=C.v}
                       onBlur={e=>e.target.style.borderColor=C.br}/>
                   </div>
@@ -3697,7 +3698,7 @@ export default function App() {
                     {label:"Desde", val:vendFrom, set:setVendFrom},
                     {label:"Hasta", val:vendTo,   set:setVendTo},
                   ].map(({label,val,set}) => (
-                    <div key={label}>
+                    <div key={label} style={{minWidth:0}}>
                       <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
                         fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
                         textTransform:"uppercase", marginBottom:6}}>{label}</label>
@@ -3705,7 +3706,7 @@ export default function App() {
                         style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
                           borderRadius:9, color:C.tx, padding:"9px 12px",
                           fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
-                          outline:"none", colorScheme:"dark"}}
+                          outline:"none", colorScheme:"dark", minWidth:0, maxWidth:"100%"}}
                         onFocus={e=>e.target.style.borderColor=C.v}
                         onBlur={e=>e.target.style.borderColor=C.br}/>
                     </div>
@@ -3935,7 +3936,7 @@ export default function App() {
                     {label:"Desde", val:movFrom, set:setMovFrom},
                     {label:"Hasta", val:movTo,   set:setMovTo},
                   ].map(({label,val,set}) => (
-                    <div key={label}>
+                    <div key={label} style={{minWidth:0}}>
                       <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
                         fontSize:10, fontWeight:700, color:C.tx3, letterSpacing:1,
                         textTransform:"uppercase", marginBottom:6}}>{label}</label>
@@ -3943,7 +3944,7 @@ export default function App() {
                         style={{width:"100%", background:C.card2, border:`1px solid ${C.br}`,
                           borderRadius:9, color:C.tx, padding:"9px 12px",
                           fontFamily:"'DM Mono',monospace", fontSize:12, fontWeight:500,
-                          outline:"none", colorScheme:"dark"}}
+                          outline:"none", colorScheme:"dark", minWidth:0, maxWidth:"100%"}}
                         onFocus={e=>e.target.style.borderColor=C.v}
                         onBlur={e=>e.target.style.borderColor=C.br}/>
                     </div>
