@@ -1603,6 +1603,7 @@ export default function App() {
   const [waNumber,   setWaNumber]   = useState("")
   const [waSaving,   setWaSaving]   = useState(false)
   const [blockNoStock, setBlockNoStock] = useState(false)
+  const [stockFilter, setStockFilter] = useState(null) // null | "sin" | "bajo"
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
@@ -2708,33 +2709,70 @@ export default function App() {
                 gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",
                 gap:12, marginBottom:26}}>
                 {[
-                  {l:"Productos totales", v:allProds.length,        c:C.v,  i:"📦"},
-                  {l:"Con inventario",    v:withStock.length,       c:C.bl, i:"📋"},
-                  {l:"Sin stock",         v:sinStock.length,        c:C.er, i:"🔴"},
-                  {l:"Stock bajo",        v:bajoStock.length,       c:C.am, i:"🟡"},
-                  {l:"Valor inventario",  v:$(valorInventario),     c:C.ok, i:"💰"},
-                ].map(({l,v,c,i}) => (
-                  <div key={l} style={{background:C.card, border:`1px solid ${C.br}`,
-                    borderRadius:14, padding:"16px 18px", boxShadow:C.sh}}>
-                    <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:10}}>
-                      <span style={{fontSize:15}}>{i}</span>
-                      <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:10,
-                        fontWeight:700, color:C.tx3, letterSpacing:1,
-                        textTransform:"uppercase"}}>{l}</span>
+                  {l:"Productos totales", v:allProds.length,    c:C.v,  i:"📦", f:null},
+                  {l:"Con inventario",    v:withStock.length,   c:C.bl, i:"📋", f:null},
+                  {l:"Sin stock",         v:sinStock.length,    c:C.er, i:"🔴", f:"sin"},
+                  {l:"Stock bajo",        v:bajoStock.length,   c:C.am, i:"🟡", f:"bajo"},
+                  {l:"Valor inventario",  v:$(valorInventario), c:C.ok, i:"💰", f:null},
+                ].map(({l,v,c,i,f}) => {
+                  const clickable = f !== null && v > 0
+                  const active = stockFilter === f && f !== null
+                  return (
+                    <div key={l}
+                      onClick={clickable ? () => setStockFilter(active ? null : f) : undefined}
+                      style={{background:C.card,
+                        border:`1px solid ${active ? c : C.br}`,
+                        borderRadius:14, padding:"16px 18px",
+                        boxShadow: active ? `0 0 16px ${c}33` : C.sh,
+                        cursor: clickable ? "pointer" : "default",
+                        transition:"border-color .2s, box-shadow .2s"}}>
+                      <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:10}}>
+                        <span style={{fontSize:15}}>{i}</span>
+                        <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:10,
+                          fontWeight:700, color:C.tx3, letterSpacing:1,
+                          textTransform:"uppercase"}}>{l}</span>
+                      </div>
+                      <div style={{fontFamily:"'Space Grotesk',monospace", fontWeight:700,
+                        fontSize:26, color:c, letterSpacing:-1}}>{v}</div>
+                      {clickable && (
+                        <div style={{fontSize:10, color:c, marginTop:4,
+                          fontFamily:"'DM Sans',sans-serif", fontWeight:600}}>
+                          {active ? "▲ Ocultar" : "▼ Ver productos"}
+                        </div>
+                      )}
                     </div>
-                    <div style={{fontFamily:"'Space Grotesk',monospace", fontWeight:700,
-                      fontSize:26, color:c, letterSpacing:-1}}>{v}</div>
-                  </div>
-                ))}
+                  )
+                })}
               </div>
 
-              {/* alertas de stock */}
-              {(sinStock.length > 0 || bajoStock.length > 0) && (
+              {/* alertas de stock — filtradas por KPI seleccionado */}
+              {(() => {
+                let alertList = []
+                if (stockFilter === "sin")  alertList = sinStock
+                else if (stockFilter === "bajo") alertList = bajoStock
+                else alertList = [...sinStock, ...bajoStock]
+                if (alertList.length === 0) return null
+                return (
                 <div style={{marginBottom:26}}>
-                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
-                    fontSize:15, color:C.tx, marginBottom:12}}>⚠️ Alertas de stock</h3>
+                  <div style={{display:"flex", alignItems:"center",
+                    justifyContent:"space-between", marginBottom:12}}>
+                    <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                      fontSize:15, color:C.tx, margin:0}}>
+                      ⚠️ {stockFilter==="sin" ? "Productos sin stock"
+                          : stockFilter==="bajo" ? "Productos con stock bajo"
+                          : "Alertas de stock"}
+                    </h3>
+                    {stockFilter && (
+                      <button onClick={()=>setStockFilter(null)}
+                        style={{background:C.vbg, border:`1px solid ${C.v}44`,
+                          borderRadius:8, color:C.v, padding:"5px 12px",
+                          fontFamily:"'DM Sans',sans-serif", fontSize:12, fontWeight:600}}>
+                        Ver todas
+                      </button>
+                    )}
+                  </div>
                   <div style={{display:"flex", flexDirection:"column", gap:8}}>
-                    {[...sinStock, ...bajoStock].map(p => {
+                    {alertList.map(p => {
                       const critical = p.stock <= 0
                       return (
                         <div key={p.id+p.name}
@@ -2745,7 +2783,13 @@ export default function App() {
                             <span style={{fontSize:16}}>{critical?"🔴":"🟡"}</span>
                             <div>
                               <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:14,
-                                fontWeight:600, color:C.tx, margin:0}}>{p.name}</p>
+                                fontWeight:600, color:C.tx, margin:0}}>
+                                {p.name}
+                                {mayorProds.some(mp=>mp.id===p.id) && (
+                                  <span style={{fontSize:10, color:C.am, marginLeft:6,
+                                    fontWeight:700}}>📦 MAY</span>
+                                )}
+                              </p>
                               <p style={{fontSize:11, color:C.tx3, margin:0}}>
                                 Mínimo: {p.stock_min||0} {p.unit||"unidad"}
                               </p>
@@ -2760,7 +2804,8 @@ export default function App() {
                     })}
                   </div>
                 </div>
-              )}
+                )
+              })()}
 
               {/* configuración */}
               <div style={{marginBottom:26}}>
