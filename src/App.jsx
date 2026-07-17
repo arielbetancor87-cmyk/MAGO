@@ -1602,6 +1602,7 @@ export default function App() {
   const [loadDash,   setLoadDash]   = useState(false)
   const [waNumber,   setWaNumber]   = useState("")
   const [waSaving,   setWaSaving]   = useState(false)
+  const [blockNoStock, setBlockNoStock] = useState(false)
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
@@ -1627,6 +1628,7 @@ export default function App() {
         if (snap.exists()) {
           setUserStatus(snap.data().status || "active")
           setWaNumber(snap.data().wa_number || "")
+          setBlockNoStock(snap.data().block_no_stock || false)
           updateDoc(doc(db,"users",u.uid), {last_login:Timestamp.now()}).catch(()=>{})
         } else {
           await setDoc(doc(db,"users",u.uid), {
@@ -1758,6 +1760,12 @@ export default function App() {
   const filteredProds = activeProds.filter(p => p.name.toLowerCase().includes(search.toLowerCase()))
 
   const addItem = p => {
+    // Bloqueo de venta sin stock (si está activado en config)
+    if (blockNoStock && p.stock !== null && p.stock !== undefined) {
+      const inCartQty = cart.find(i => i.id===p.id)?.qty || 0
+      if (p.stock <= 0) { toast(`${p.name}: sin stock`, true); return }
+      if (inCartQty >= p.stock) { toast(`${p.name}: no hay más stock (${p.stock})`, true); return }
+    }
     setCart(prev => {
       const ex = prev.find(i => i.id===p.id)
       return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
@@ -1765,9 +1773,19 @@ export default function App() {
     toast(`${p.name} agregado`)
   }
 
-  const setQty = (id,q) => setCart(prev =>
-    q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
-  )
+  const setQty = (id,q) => {
+    // Al aumentar cantidad manualmente, respetar bloqueo de stock
+    if (blockNoStock && q > 0) {
+      const inCart = cart.find(i => i.id===id)
+      if (inCart && inCart.stock !== null && inCart.stock !== undefined && q > inCart.stock) {
+        toast(`Solo hay ${inCart.stock} en stock`, true)
+        return
+      }
+    }
+    setCart(prev =>
+      q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
+    )
+  }
 
   /* save product — optimistic + real-time listener updates UI automatically */
   const saveProd = p => {
@@ -1971,6 +1989,14 @@ export default function App() {
       toast("Número de WhatsApp guardado")
     } catch(e) { toast("Error al guardar", true) }
     finally { setWaSaving(false) }
+  }
+
+  const toggleBlockNoStock = async () => {
+    if (!user) return
+    const next = !blockNoStock
+    setBlockNoStock(next)
+    toast(next ? "Bloqueo de venta sin stock activado" : "Venta sin stock permitida")
+    updateDoc(doc(db, "users", user.uid), {block_no_stock: next}).catch(console.warn)
   }
 
   const cancelOrder = id => {
@@ -2735,6 +2761,43 @@ export default function App() {
                   </div>
                 </div>
               )}
+
+              {/* configuración */}
+              <div style={{marginBottom:26}}>
+                <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                  fontSize:15, color:C.tx, marginBottom:12}}>⚙️ Configuración</h3>
+                <div style={{background:C.card, border:`1px solid ${C.br}`,
+                  borderRadius:14, padding:"16px 18px", boxShadow:C.sh,
+                  display:"flex", alignItems:"center", justifyContent:"space-between",
+                  gap:14}}>
+                  <div style={{flex:1}}>
+                    <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:14,
+                      fontWeight:600, color:C.tx, margin:"0 0 3px"}}>
+                      Bloquear venta sin stock
+                    </p>
+                    <p style={{fontSize:12, color:C.tx3, margin:0, lineHeight:1.5}}>
+                      {blockNoStock
+                        ? "No se pueden vender productos sin stock disponible."
+                        : "Se permite vender aunque no haya stock (queda en negativo)."}
+                    </p>
+                  </div>
+                  {/* switch */}
+                  <button onClick={toggleBlockNoStock}
+                    style={{width:52, height:30, flexShrink:0, borderRadius:20,
+                      border:"none", position:"relative", cursor:"pointer",
+                      background: blockNoStock
+                        ? `linear-gradient(135deg,${C.ok},${C.ok}bb)`
+                        : C.card2,
+                      transition:"background .2s",
+                      boxShadow: blockNoStock ? `0 0 12px ${C.ok}44` : "none"}}>
+                    <span style={{position:"absolute", top:3,
+                      left: blockNoStock ? 25 : 3,
+                      width:24, height:24, borderRadius:"50%",
+                      background:"#fff", transition:"left .2s",
+                      boxShadow:"0 2px 4px rgba(0,0,0,.3)"}}/>
+                  </button>
+                </div>
+              </div>
 
               {/* productos más vendidos */}
               <div>
