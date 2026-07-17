@@ -88,9 +88,11 @@ const C = {
 const CSS = `
 @import url('https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=DM+Sans:wght@400;500;700&family=DM+Mono:wght@500;700&display=swap');
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+html,body{max-width:100%;overflow-x:hidden}
 body{font-family:'DM Sans',sans-serif;background:${C.bg};color:${C.tx};-webkit-font-smoothing:antialiased}
 input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none}
 input[type=number]{-moz-appearance:textfield}
+input[type=datetime-local]{min-width:0;max-width:100%;-webkit-appearance:none}
 ::-webkit-scrollbar{width:6px}
 ::-webkit-scrollbar-thumb{background:${C.br};border-radius:4px}
 ::-webkit-scrollbar-thumb:hover{background:${C.v}44}
@@ -1140,7 +1142,7 @@ function ProductModal({p, categories=[], onClose, onSave}) {
           <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
             fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
             textTransform:"uppercase", marginBottom:12}}>📦 Inventario (opcional)</label>
-          <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10, marginBottom:10}}>
+          <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:10, marginBottom:10}}>
             <div>
               <label style={{display:"block", fontSize:10, fontWeight:600,
                 color:C.tx3, marginBottom:5}}>Stock actual</label>
@@ -3280,7 +3282,7 @@ export default function App() {
               <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
                 fontWeight:700, color:C.tx3, letterSpacing:1,
                 textTransform:"uppercase", marginBottom:12}}>Rango de consulta</p>
-              <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+              <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:10}}>
                 {[
                   {label:"Desde", val:histFrom, set:setHistFrom},
                   {label:"Hasta", val:histTo,   set:setHistTo},
@@ -3690,7 +3692,7 @@ export default function App() {
                 <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
                   fontWeight:700, color:C.tx3, letterSpacing:1,
                   textTransform:"uppercase", marginBottom:12}}>Rango</p>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:10}}>
                   {[
                     {label:"Desde", val:vendFrom, set:setVendFrom},
                     {label:"Hasta", val:vendTo,   set:setVendTo},
@@ -3928,7 +3930,7 @@ export default function App() {
                 <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
                   fontWeight:700, color:C.tx3, letterSpacing:1,
                   textTransform:"uppercase", marginBottom:12}}>Rango de consulta</p>
-                <div style={{display:"grid", gridTemplateColumns:"1fr 1fr", gap:10}}>
+                <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)", gap:10}}>
                   {[
                     {label:"Desde", val:movFrom, set:setMovFrom},
                     {label:"Hasta", val:movTo,   set:setMovTo},
