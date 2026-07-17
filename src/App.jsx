@@ -1231,6 +1231,150 @@ function ProductModal({p, categories=[], onClose, onSave}) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   STOCK MODAL — carga rápida de stock
+════════════════════════════════════════════════════════════════════════ */
+function StockModal({p, onClose, onSave}) {
+  const [mode,   setMode]   = useState("add")   // add | remove | set
+  const [qty,    setQty]    = useState("")
+  const [reason, setReason] = useState("")
+  const [err,    setErr]    = useState("")
+
+  const current = p.stock ?? 0
+  const n = parseFloat(qty) || 0
+  const result = mode==="add" ? current + n
+              : mode==="remove" ? current - n
+              : n
+
+  const save = () => {
+    if (qty==="" || n < 0) return setErr("Ingresá una cantidad válida")
+    if (mode==="remove" && n > current) return setErr("No podés quitar más de lo que hay")
+    onSave({
+      productId: p.id,
+      newStock:  result,
+      movement: {
+        type:    mode==="add" ? "ingreso" : mode==="remove" ? "salida" : "ajuste",
+        qty:     mode==="set" ? result : n,
+        prev:    current,
+        next:    result,
+        reason:  reason.trim() || (mode==="add"?"Carga de stock":mode==="remove"?"Salida manual":"Ajuste manual"),
+      },
+    })
+  }
+
+  const I = {
+    width:"100%", background:C.card2, border:`1px solid ${C.br}`,
+    borderRadius:10, color:C.tx, padding:"12px 14px", fontSize:15,
+    outline:"none", fontFamily:"'DM Sans',sans-serif", display:"block",
+  }
+
+  return (
+    <div style={{position:"fixed", inset:0, zIndex:800,
+      background:"rgba(6,4,17,.85)",
+      display:"flex", alignItems:"flex-end", justifyContent:"center"}}
+      onClick={onClose}>
+      <div className="fadeUp"
+        style={{background:C.card, borderRadius:"20px 20px 0 0",
+          padding:"22px 20px 32px", width:"100%", maxWidth:460,
+          maxHeight:"92vh", overflowY:"auto", position:"relative",
+          border:`1px solid ${C.br}`, borderBottom:"none",
+          boxShadow:`0 -12px 48px rgba(0,0,0,.7)`}}
+        onClick={e => e.stopPropagation()}>
+
+        <div style={{width:36, height:4, background:C.br, borderRadius:4,
+          margin:"-6px auto 18px"}}/>
+        <button onClick={onClose}
+          style={{position:"absolute", top:18, right:18, background:C.vbg,
+            border:`1px solid ${C.br}`, color:C.v, width:32, height:32,
+            borderRadius:9, fontSize:16, display:"flex",
+            alignItems:"center", justifyContent:"center", fontWeight:700}}>✕</button>
+
+        <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:19,
+          fontWeight:700, color:C.tx, marginBottom:4}}>📦 Cargar stock</h2>
+        <p style={{fontSize:13, color:C.tx2, marginBottom:6}}>{p.name}</p>
+        <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3,
+          marginBottom:20}}>
+          Stock actual: <b style={{color:C.v}}>{current} {p.unit||"unidad"}</b>
+        </p>
+
+        {/* mode selector */}
+        <div style={{display:"grid", gridTemplateColumns:"1fr 1fr 1fr",
+          gap:8, marginBottom:18}}>
+          {[
+            {k:"add",    i:"➕", l:"Ingreso"},
+            {k:"remove", i:"➖", l:"Salida"},
+            {k:"set",    i:"✏️", l:"Ajustar"},
+          ].map(({k,i,l}) => (
+            <button key={k} onClick={()=>{setMode(k);setErr("")}}
+              style={{padding:"12px 4px", borderRadius:12,
+                background: mode===k ? C.vbg : C.card2,
+                color:      mode===k ? C.v : C.tx2,
+                border:`1px solid ${mode===k ? C.v : C.br}`,
+                fontFamily:"'DM Sans',sans-serif", fontWeight:700, fontSize:13}}>
+              <div style={{fontSize:18, marginBottom:3}}>{i}</div>{l}
+            </button>
+          ))}
+        </div>
+
+        <div style={{marginBottom:14}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:6}}>
+            {mode==="set" ? "Nuevo stock total" : "Cantidad"}
+          </label>
+          <input type="text" inputMode="numeric" value={qty}
+            onChange={e=>{setQty(e.target.value.replace(/[^0-9]/g,""));setErr("")}}
+            placeholder="0" style={I} autoFocus
+            onFocus={e=>e.target.style.borderColor=C.v}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
+        </div>
+
+        <div style={{marginBottom:16}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:6}}>Motivo (opcional)</label>
+          <input type="text" value={reason} onChange={e=>setReason(e.target.value)}
+            placeholder="Ej: Compra proveedor, merma..." style={I}
+            onFocus={e=>e.target.style.borderColor=C.v}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
+        </div>
+
+        {/* preview */}
+        {qty!=="" && (
+          <div style={{background:C.card2, borderRadius:12,
+            border:`1px solid ${result<0?C.er:C.ok}44`,
+            padding:"12px 16px", marginBottom:16,
+            display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+            <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:12,
+              color:C.tx3, letterSpacing:.5, textTransform:"uppercase"}}>
+              Stock resultante
+            </span>
+            <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:26,
+              fontWeight:700, color:result<0?C.er:C.ok, letterSpacing:-1}}>
+              {result}
+            </span>
+          </div>
+        )}
+
+        {err && (
+          <div style={{background:C.erbg, border:`1px solid ${C.er}44`,
+            borderRadius:10, padding:"10px 14px",
+            color:C.er, fontSize:13, marginBottom:14}}>⚠️ {err}</div>
+        )}
+
+        <button onClick={save}
+          style={{width:"100%", border:"none", borderRadius:12, padding:"14px 0",
+            fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:16,
+            color:"#0f0a1e",
+            background:`linear-gradient(135deg,${C.v},${C.vm})`,
+            boxShadow:`0 0 24px ${C.v}44`}}>
+          Guardar movimiento
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    PAY MODAL
 ════════════════════════════════════════════════════════════════════════ */
 function PayModal({total, onClose, onPay}) {
@@ -1454,6 +1598,7 @@ export default function App() {
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
+  const [stockModal, setStockModal] = useState(null)
   const [payModal,   setPayModal]   = useState(false)
   const [delModal,   setDelModal]   = useState(null)
   const [mobile,     setMobile]     = useState(window.innerWidth < 768)
@@ -1634,6 +1779,33 @@ export default function App() {
   }
 
   // ── STOCK: descuenta (sign=-1) o devuelve (sign=+1) según items vendidos ──
+  // ── Guardar movimiento de stock manual (desde StockModal) ──────────────
+  const saveStock = ({productId, newStock, movement}) => {
+    if (!user) return
+    const colPath = lista === "mayorista"
+      ? `users/${user.uid}/products_mayorista`
+      : `users/${user.uid}/products`
+    // Optimistic
+    setActiveProds(prev => prev.map(p => p.id===productId ? {...p, stock:newStock} : p))
+    setStockModal(null)
+    toast(`Stock actualizado: ${newStock}`)
+    // Firebase — update stock
+    if (!String(productId).startsWith("_"))
+      updateDoc(doc(db, colPath, productId), {stock:newStock}).catch(console.warn)
+    // Registrar movimiento en historial de inventario
+    addDoc(collection(db, `users/${user.uid}/stock_movements`), {
+      product_id:   productId,
+      product_name: activeProds.find(p=>p.id===productId)?.name || "",
+      lista:        lista,
+      type:         movement.type,
+      qty:          movement.qty,
+      stock_prev:   movement.prev,
+      stock_next:   movement.next,
+      reason:       movement.reason,
+      created_at:   Timestamp.now(),
+    }).catch(console.warn)
+  }
+
   const applyStockChange = (items, listaVenta, sign) => {
     if (!user) return
     // Solo la lista minorista/mayorista correspondiente maneja su stock
@@ -2086,6 +2258,11 @@ export default function App() {
             {!mobile && (
               <div style={{position:"absolute", top:7, right:7,
                 display:"flex", gap:4, zIndex:5}}>
+                <button onClick={e=>{e.stopPropagation();setStockModal(p)}}
+                  style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
+                    borderRadius:7, color:C.ok, width:28, height:28,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:13}}>📦</button>
                 <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
                   style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
                     borderRadius:7, color:C.v, width:28, height:28,
@@ -2100,12 +2277,19 @@ export default function App() {
             )}
 
             {mobile && (
-              <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
-                style={{position:"absolute", top:3, left:3, zIndex:5,
-                  background:"rgba(6,4,17,.65)", border:"none",
-                  borderRadius:5, color:C.v, width:18, height:18,
-                  display:"flex", alignItems:"center", justifyContent:"center",
-                  fontSize:9, lineHeight:1}}>✏️</button>
+              <div style={{position:"absolute", top:3, left:3, zIndex:5,
+                display:"flex", gap:3}}>
+                <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
+                  style={{background:"rgba(6,4,17,.65)", border:"none",
+                    borderRadius:5, color:C.v, width:18, height:18,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:9, lineHeight:1}}>✏️</button>
+                <button onClick={e=>{e.stopPropagation();setStockModal(p)}}
+                  style={{background:"rgba(6,4,17,.65)", border:"none",
+                    borderRadius:5, color:C.ok, width:18, height:18,
+                    display:"flex", alignItems:"center", justifyContent:"center",
+                    fontSize:9, lineHeight:1}}>📦</button>
+              </div>
             )}
 
             <div onClick={() => addItem(p)}
@@ -3135,6 +3319,7 @@ export default function App() {
       {orderToPay && <PayModal total={orderToPay.total}
         onClose={()=>setOrderToPay(null)}
         onPay={payInfo=>confirmOrder(orderToPay,payInfo)}/>}
+      {stockModal && <StockModal p={stockModal} onClose={()=>setStockModal(null)} onSave={saveStock}/>}
       {prodModal && <ProductModal p={prodModal.p}
         categories={[...new Set(activeProds.map(p=>p.category).filter(Boolean))].sort()}
         onClose={()=>setProdModal(null)} onSave={saveProd}/>}
