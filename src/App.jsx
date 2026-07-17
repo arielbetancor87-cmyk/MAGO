@@ -1598,6 +1598,8 @@ export default function App() {
   const [movFrom,    setMovFrom]    = useState(startOfDayDT)
   const [movTo,      setMovTo]      = useState(nowLocalDT)
   const [movType,    setMovType]    = useState("all")
+  const [dashSales,  setDashSales]  = useState([])
+  const [loadDash,   setLoadDash]   = useState(false)
   const [waNumber,   setWaNumber]   = useState("")
   const [waSaving,   setWaSaving]   = useState(false)
   const [activeShift,setActiveShift]= useState(null)   // {id, opened_at}
@@ -1705,6 +1707,18 @@ export default function App() {
       })
       .catch(console.warn).finally(() => setLoadMov(false))
   }, [user, tab, movFrom, movTo])
+
+  // Load last 30 days of sales for dashboard "most sold" metrics
+  useEffect(() => {
+    if (!user || !salesCol || tab!=="dash" || isAdmin) return
+    setLoadDash(true)
+    const from = new Date(); from.setDate(from.getDate()-30)
+    const pad = n=>String(n).padStart(2,"0")
+    const fromDT = `${from.getFullYear()}-${pad(from.getMonth()+1)}-${pad(from.getDate())}T00:00`
+    queryByRange(salesCol, fromDT, nowLocalDT())
+      .then(list => setDashSales(list))
+      .catch(console.warn).finally(() => setLoadDash(false))
+  }, [user, tab])
 
   // Load pending orders — real-time listener
   useEffect(() => {
@@ -2589,7 +2603,7 @@ export default function App() {
             filter:"drop-shadow(0 0 12px rgba(167,139,250,0.3))"}}/>
 
           <div style={{display:"flex", alignItems:"center", gap:6}}>
-            {[["caja","🏪","CAJA"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"],["inventario","📋","INVENTARIO"]].map(([k,ic,l]) => (
+            {[["caja","🏪","CAJA"],["dash","📈","PANEL"],["pedidos","🛵","PEDIDOS"],["hist","📊","HISTORIAL"],["vendidos","📦","VENDIDOS"],["inventario","📋","INVENTARIO"]].map(([k,ic,l]) => (
               <button key={k} onClick={() => setTab(k)}
                 style={{
                   background: tab===k ? C.vbg : "transparent",
@@ -2628,6 +2642,156 @@ export default function App() {
         </header>
 
         {/* ── CAJA ── */}
+        {/* ── PANEL / DASHBOARD ── */}
+        {tab==="dash" && (() => {
+          // Combine both lists for inventory metrics
+          const allProds = [...prods, ...mayorProds]
+          const withStock = allProds.filter(p => p.stock !== null && p.stock !== undefined)
+          const sinStock  = withStock.filter(p => p.stock <= 0)
+          const bajoStock = withStock.filter(p => p.stock > 0 && p.stock <= (p.stock_min||0))
+          const valorInventario = withStock.reduce((s,p) => s + (p.stock||0)*(p.price||0), 0)
+
+          // Most sold (last 30 days) from dashSales
+          const soldMap = {}
+          dashSales.forEach(sale => {
+            ;(sale.items||[]).forEach(it => {
+              if (!soldMap[it.product_name]) soldMap[it.product_name] = 0
+              soldMap[it.product_name] += it.qty
+            })
+          })
+          const topSold = Object.entries(soldMap)
+            .map(([name,qty]) => ({name,qty}))
+            .sort((a,b) => b.qty-a.qty)
+            .slice(0,5)
+          const maxSold = topSold[0]?.qty || 1
+
+          return (
+            <div style={{maxWidth:920, margin:"0 auto", padding:"24px 16px 40px"}}>
+              <div style={{marginBottom:22}}>
+                <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
+                  fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                  Panel de control
+                </h2>
+                <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
+                  Resumen de inventario y ventas (últimos 30 días)
+                </p>
+              </div>
+
+              {/* KPI cards */}
+              <div style={{display:"grid",
+                gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",
+                gap:12, marginBottom:26}}>
+                {[
+                  {l:"Productos totales", v:allProds.length,        c:C.v,  i:"📦"},
+                  {l:"Con inventario",    v:withStock.length,       c:C.bl, i:"📋"},
+                  {l:"Sin stock",         v:sinStock.length,        c:C.er, i:"🔴"},
+                  {l:"Stock bajo",        v:bajoStock.length,       c:C.am, i:"🟡"},
+                  {l:"Valor inventario",  v:$(valorInventario),     c:C.ok, i:"💰"},
+                ].map(({l,v,c,i}) => (
+                  <div key={l} style={{background:C.card, border:`1px solid ${C.br}`,
+                    borderRadius:14, padding:"16px 18px", boxShadow:C.sh}}>
+                    <div style={{display:"flex", alignItems:"center", gap:7, marginBottom:10}}>
+                      <span style={{fontSize:15}}>{i}</span>
+                      <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:10,
+                        fontWeight:700, color:C.tx3, letterSpacing:1,
+                        textTransform:"uppercase"}}>{l}</span>
+                    </div>
+                    <div style={{fontFamily:"'Space Grotesk',monospace", fontWeight:700,
+                      fontSize:26, color:c, letterSpacing:-1}}>{v}</div>
+                  </div>
+                ))}
+              </div>
+
+              {/* alertas de stock */}
+              {(sinStock.length > 0 || bajoStock.length > 0) && (
+                <div style={{marginBottom:26}}>
+                  <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                    fontSize:15, color:C.tx, marginBottom:12}}>⚠️ Alertas de stock</h3>
+                  <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                    {[...sinStock, ...bajoStock].map(p => {
+                      const critical = p.stock <= 0
+                      return (
+                        <div key={p.id+p.name}
+                          style={{background:C.card, border:`1px solid ${(critical?C.er:C.am)}44`,
+                            borderRadius:12, padding:"12px 16px",
+                            display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                          <div style={{display:"flex", alignItems:"center", gap:10}}>
+                            <span style={{fontSize:16}}>{critical?"🔴":"🟡"}</span>
+                            <div>
+                              <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:14,
+                                fontWeight:600, color:C.tx, margin:0}}>{p.name}</p>
+                              <p style={{fontSize:11, color:C.tx3, margin:0}}>
+                                Mínimo: {p.stock_min||0} {p.unit||"unidad"}
+                              </p>
+                            </div>
+                          </div>
+                          <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:18,
+                            fontWeight:700, color:critical?C.er:C.am, letterSpacing:-.5}}>
+                            {critical ? "Sin stock" : `${p.stock}`}
+                          </span>
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+              )}
+
+              {/* productos más vendidos */}
+              <div>
+                <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontWeight:700,
+                  fontSize:15, color:C.tx, marginBottom:12}}>
+                  🏆 Más vendidos (30 días)
+                </h3>
+                {loadDash ? (
+                  <div style={{display:"flex", justifyContent:"center", padding:40}}><Spin s={24}/></div>
+                ) : topSold.length===0 ? (
+                  <p style={{fontSize:13, color:C.tx3, padding:"20px 0"}}>
+                    Sin ventas registradas en los últimos 30 días.
+                  </p>
+                ) : (
+                  <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                    {topSold.map((item,i) => {
+                      const pct = (item.qty/maxSold)*100
+                      return (
+                        <div key={item.name}
+                          style={{background:C.card, border:`1px solid ${i===0?C.v+"55":C.br}`,
+                            borderRadius:12, padding:"14px 16px", position:"relative",
+                            overflow:"hidden",
+                            boxShadow:i===0?`0 0 16px ${C.v}15`:C.sh}}>
+                          <div style={{position:"absolute", left:0, top:0, bottom:0,
+                            width:`${pct}%`, background:`${C.v}0a`, pointerEvents:"none"}}/>
+                          <div style={{position:"relative", display:"flex",
+                            alignItems:"center", justifyContent:"space-between", gap:12}}>
+                            <div style={{display:"flex", alignItems:"center", gap:12, minWidth:0}}>
+                              <span style={{fontFamily:"'Space Grotesk',sans-serif",
+                                fontSize:16, fontWeight:700,
+                                color:i===0?C.am:i<3?C.v:C.tx3, flexShrink:0}}>
+                                {i===0?"🥇":i===1?"🥈":i===2?"🥉":`#${i+1}`}
+                              </span>
+                              <span style={{fontFamily:"'DM Sans',sans-serif", fontSize:14,
+                                fontWeight:600, color:C.tx, overflow:"hidden",
+                                textOverflow:"ellipsis", whiteSpace:"nowrap"}}>
+                                {item.name}
+                              </span>
+                            </div>
+                            <span style={{fontFamily:"'Space Grotesk',monospace",
+                              fontSize:18, fontWeight:700, color:i===0?C.v:C.tx,
+                              letterSpacing:-1, flexShrink:0}}>
+                              {item.qty}
+                              <span style={{fontSize:11, color:C.tx3, marginLeft:3,
+                                fontFamily:"'DM Sans',sans-serif"}}>uds</span>
+                            </span>
+                          </div>
+                        </div>
+                      )
+                    })}
+                  </div>
+                )}
+              </div>
+            </div>
+          )
+        })()}
+
         {tab==="caja" && (
           mobile ? (
             <div style={{height:"calc(100vh - 62px)", display:"flex", flexDirection:"column"}}>
