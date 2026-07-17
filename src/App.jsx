@@ -1633,7 +1633,7 @@ function PayModal({total, onClose, onPay}) {
               {mode==="mixto" ? "💵 Monto efectivo" : "Monto recibido"}
             </label>
             <input type="number" value={cash} onChange={e=>setCash(e.target.value)}
-              placeholder="0" style={N} autoFocus
+              placeholder="0" style={N}
               onFocus={e=>e.target.style.borderColor=C.ok}
               onBlur={e=>e.target.style.borderColor=C.br}/>
           </div>
