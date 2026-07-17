@@ -1264,6 +1264,140 @@ function ProductModal({p, categories=[], onClose, onSave}) {
 }
 
 /* ════════════════════════════════════════════════════════════════════════
+   SCANNER MODAL — escáner de código de barras con cámara (html5-qrcode CDN)
+════════════════════════════════════════════════════════════════════════ */
+function ScannerModal({onClose, onScan}) {
+  const [status, setStatus] = useState("loading") // loading | ready | error
+  const [lastCode, setLastCode] = useState("")
+  const scannerRef = useRef(null)
+  const lastScanRef = useRef({code:"", time:0})
+
+  useEffect(() => {
+    let cancelled = false
+    let html5Qr = null
+
+    const beep = () => {
+      try {
+        const ctx = new (window.AudioContext||window.webkitAudioContext)()
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain); gain.connect(ctx.destination)
+        osc.frequency.value = 880; osc.type = "sine"
+        gain.gain.setValueAtTime(0.15, ctx.currentTime)
+        osc.start()
+        osc.stop(ctx.currentTime + 0.12)
+        setTimeout(()=>ctx.close(), 300)
+      } catch(_) {}
+    }
+
+    const loadScript = () => new Promise((resolve, reject) => {
+      if (window.Html5Qrcode) return resolve()
+      const s = document.createElement("script")
+      s.src = "https://cdnjs.cloudflare.com/ajax/libs/html5-qrcode/2.3.8/html5-qrcode.min.js"
+      s.onload = resolve
+      s.onerror = reject
+      document.head.appendChild(s)
+    })
+
+    const start = async () => {
+      try {
+        await loadScript()
+        if (cancelled) return
+        html5Qr = new window.Html5Qrcode("scanner-region")
+        scannerRef.current = html5Qr
+        await html5Qr.start(
+          {facingMode: "environment"},
+          {fps: 10, qrbox: {width: 250, height: 150},
+           formatsToSupport: undefined},  // soporta todos: EAN13, UPC, Code128, QR
+          (decodedText) => {
+            const now = Date.now()
+            // Evitar lecturas repetidas del mismo código en <2s
+            if (decodedText === lastScanRef.current.code && now - lastScanRef.current.time < 2000) return
+            lastScanRef.current = {code:decodedText, time:now}
+            beep()
+            setLastCode(decodedText)
+            onScan(decodedText)
+          },
+          () => {}  // ignore per-frame decode errors
+        )
+        if (!cancelled) setStatus("ready")
+      } catch(e) {
+        console.warn("scanner error:", e)
+        if (!cancelled) setStatus("error")
+      }
+    }
+    start()
+
+    return () => {
+      cancelled = true
+      if (scannerRef.current) {
+        scannerRef.current.stop().then(()=>{
+          scannerRef.current.clear()
+        }).catch(()=>{})
+      }
+    }
+  }, [])
+
+  return (
+    <div style={{position:"fixed", inset:0, zIndex:900,
+      background:"rgba(6,4,17,.92)",
+      display:"flex", flexDirection:"column",
+      alignItems:"center", justifyContent:"center", padding:20}}>
+
+      <div style={{width:"100%", maxWidth:400, textAlign:"center"}}>
+        <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:20,
+          fontWeight:700, color:C.v, marginBottom:6}}>📷 Escanear producto</h2>
+        <p style={{fontSize:13, color:C.tx2, marginBottom:20}}>
+          Apuntá la cámara al código de barras
+        </p>
+
+        {/* scanner region */}
+        <div style={{position:"relative", background:"#000",
+          borderRadius:16, overflow:"hidden",
+          border:`2px solid ${C.v}44`, minHeight:260, marginBottom:16}}>
+          <div id="scanner-region" style={{width:"100%"}}/>
+          {status==="loading" && (
+            <div style={{position:"absolute", inset:0, display:"flex",
+              flexDirection:"column", alignItems:"center", justifyContent:"center",
+              gap:12, color:C.tx2}}>
+              <Spin s={28}/>
+              <span style={{fontSize:13}}>Iniciando cámara...</span>
+            </div>
+          )}
+          {status==="error" && (
+            <div style={{position:"absolute", inset:0, display:"flex",
+              flexDirection:"column", alignItems:"center", justifyContent:"center",
+              gap:10, padding:24, color:C.er, textAlign:"center"}}>
+              <span style={{fontSize:32}}>🚫</span>
+              <span style={{fontSize:14, fontWeight:600}}>No se pudo acceder a la cámara</span>
+              <span style={{fontSize:12, color:C.tx3, lineHeight:1.5}}>
+                Verificá que diste permiso de cámara y que estés usando HTTPS.
+              </span>
+            </div>
+          )}
+        </div>
+
+        {lastCode && (
+          <div style={{background:C.okbg, border:`1px solid ${C.ok}44`,
+            borderRadius:10, padding:"10px 14px", marginBottom:16,
+            fontFamily:"'DM Mono',monospace", fontSize:13, color:C.ok}}>
+            ✓ Último: {lastCode}
+          </div>
+        )}
+
+        <button onClick={onClose}
+          style={{width:"100%", background:C.card2,
+            border:`1px solid ${C.br}`, borderRadius:12, padding:"14px 0",
+            color:C.tx, fontFamily:"'Space Grotesk',sans-serif",
+            fontWeight:700, fontSize:15}}>
+          Cerrar escáner
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════════════════
    STOCK MODAL — carga rápida de stock
 ════════════════════════════════════════════════════════════════════════ */
 function StockModal({p, onClose, onSave}) {
@@ -1641,6 +1775,7 @@ export default function App() {
   const [shiftBusy,  setShiftBusy]  = useState(false)
   const [prodModal,  setProdModal]  = useState(null)
   const [stockModal, setStockModal] = useState(null)
+  const [scanOpen,   setScanOpen]   = useState(false)
   const [payModal,   setPayModal]   = useState(false)
   const [delModal,   setDelModal]   = useState(null)
   const [mobile,     setMobile]     = useState(window.innerWidth < 768)
@@ -1808,6 +1943,17 @@ export default function App() {
       return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
     })
     toast(`${p.name} agregado`)
+  }
+
+  // Handler de escaneo con cámara — busca por código y agrega al carrito
+  const handleScan = (code) => {
+    const clean = String(code).trim()
+    const found = activeProds.find(p => p.barcode === clean)
+    if (found) {
+      addItem(found)
+    } else {
+      toast(`Código no encontrado: ${clean}`, true)
+    }
   }
 
   const setQty = (id,q) => {
@@ -2339,24 +2485,35 @@ export default function App() {
         ))}
       </div>
 
-      {/* search */}
-      <div style={{position:"relative", marginBottom:16}}>
-        <span style={{position:"absolute", left:12, top:"50%",
-          transform:"translateY(-50%)", fontSize:14,
-          color:C.tx3, pointerEvents:"none"}}>🔍</span>
-        <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
-          placeholder="Buscar producto..."
-          style={{width:"100%", background:C.card, border:`1px solid ${C.br}`,
-            borderRadius:12, color:C.tx, padding:"11px 36px 11px 38px",
-            fontSize:14, outline:"none", fontFamily:"'DM Sans',sans-serif"}}
-          onFocus={e=>e.target.style.borderColor=C.v}
-          onBlur={e=>e.target.style.borderColor=C.br}/>
-        {search && (
-          <button onClick={()=>setSearch("")}
-            style={{position:"absolute", right:11, top:"50%",
-              transform:"translateY(-50%)", background:"none", border:"none",
-              color:C.tx3, fontSize:17, padding:4}}>✕</button>
-        )}
+      {/* search + scan */}
+      <div style={{display:"flex", gap:8, marginBottom:16}}>
+        <div style={{position:"relative", flex:1}}>
+          <span style={{position:"absolute", left:12, top:"50%",
+            transform:"translateY(-50%)", fontSize:14,
+            color:C.tx3, pointerEvents:"none"}}>🔍</span>
+          <input type="text" value={search} onChange={e=>setSearch(e.target.value)}
+            placeholder="Buscar producto o código..."
+            style={{width:"100%", background:C.card, border:`1px solid ${C.br}`,
+              borderRadius:12, color:C.tx, padding:"11px 36px 11px 38px",
+              fontSize:14, outline:"none", fontFamily:"'DM Sans',sans-serif"}}
+            onFocus={e=>e.target.style.borderColor=C.v}
+            onBlur={e=>e.target.style.borderColor=C.br}/>
+          {search && (
+            <button onClick={()=>setSearch("")}
+              style={{position:"absolute", right:11, top:"50%",
+                transform:"translateY(-50%)", background:"none", border:"none",
+                color:C.tx3, fontSize:17, padding:4}}>✕</button>
+          )}
+        </div>
+        <button onClick={()=>setScanOpen(true)}
+          style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
+            border:"none", borderRadius:12, color:"#0f0a1e",
+            padding:"0 16px", fontFamily:"'Space Grotesk',sans-serif",
+            fontWeight:700, fontSize:14, flexShrink:0,
+            display:"flex", alignItems:"center", gap:6,
+            boxShadow:`0 0 16px ${C.v}33`, whiteSpace:"nowrap"}}>
+          📷 {mobile ? "" : "Escanear"}
+        </button>
       </div>
 
       {/* grid */}
@@ -3852,6 +4009,7 @@ export default function App() {
         onClose={()=>setOrderToPay(null)}
         onPay={payInfo=>confirmOrder(orderToPay,payInfo)}/>}
       {stockModal && <StockModal p={stockModal} onClose={()=>setStockModal(null)} onSave={saveStock}/>}
+      {scanOpen && <ScannerModal onClose={()=>setScanOpen(false)} onScan={handleScan}/>}
       {prodModal && <ProductModal p={prodModal.p}
         categories={[...new Set(activeProds.map(p=>p.category).filter(Boolean))].sort()}
         onClose={()=>setProdModal(null)} onSave={saveProd}/>}
