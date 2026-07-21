@@ -327,6 +327,7 @@ function OrderPage({uid}) {
   const [err,      setErr]      = useState("")
   const [waNumber, setWaNumber] = useState("")
   const [waUrlSent,setWaUrlSent]= useState("")
+  const [blockNS,  setBlockNS]  = useState(false)
 
   useEffect(() => {
     // Load catalog
@@ -340,20 +341,44 @@ function OrderPage({uid}) {
       .finally(() => setLoading(false))
     // Load business WhatsApp number from user profile
     getDoc(doc(db, "users", uid))
-      .then(snap => { if (snap.exists()) setWaNumber(snap.data().wa_number || "") })
+      .then(snap => { if (snap.exists()) {
+        setWaNumber(snap.data().wa_number || "")
+        setBlockNS(snap.data().block_no_stock || false)
+      }})
       .catch(() => {})
   }, [uid])
 
   const cartTotal = cart.reduce((s,i) => s+i.price*i.qty, 0)
   const cartQty   = cart.reduce((s,i) => s+i.qty, 0)
 
-  const addItem = p => setCart(prev => {
-    const ex = prev.find(i => i.id===p.id)
-    return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
-  })
-  const setQtyO = (id,q) => setCart(prev =>
-    q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
-  )
+  const hasStock = p => p.stock === null || p.stock === undefined || p.stock > 0
+  const addItem = p => {
+    if (blockNS && p.stock !== null && p.stock !== undefined) {
+      const inCartQty = cart.find(i=>i.id===p.id)?.qty || 0
+      if (p.stock <= 0 || inCartQty >= p.stock) {
+        setErr(`"${p.name}" no tiene más stock disponible.`)
+        setTimeout(()=>setErr(""), 3000)
+        return
+      }
+    }
+    setCart(prev => {
+      const ex = prev.find(i => i.id===p.id)
+      return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
+    })
+  }
+  const setQtyO = (id,q) => {
+    if (blockNS && q > 0) {
+      const p = prods.find(x=>x.id===id)
+      if (p && p.stock !== null && p.stock !== undefined && q > p.stock) {
+        setErr(`Solo hay ${p.stock} de "${p.name}".`)
+        setTimeout(()=>setErr(""), 3000)
+        return
+      }
+    }
+    setCart(prev =>
+      q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
+    )
+  }
 
   const submit = async () => {
     if (!name.trim()) return setErr("Ingresá tu nombre para continuar.")
@@ -497,11 +522,13 @@ function OrderPage({uid}) {
           })
 
           const renderCard = p => {
-            const inCart = cart.find(i=>i.id===p.id)
+            const inCart  = cart.find(i=>i.id===p.id)
+            const noStock = blockNS && p.stock !== null && p.stock !== undefined && p.stock <= 0
             return (
               <div key={p.id} style={{background:OC.card, border:`1px solid ${inCart?OC.v+"66":OC.br}`,
                 borderRadius:12, overflow:"hidden",
                 boxShadow: inCart?`0 0 16px ${OC.v}22`:"none",
+                opacity: noStock ? .55 : 1,
                 transition:"border-color .2s, box-shadow .2s"}}>
                 <div style={{paddingTop:"75%", position:"relative",
                   overflow:"hidden", background:OC.vbg}}>
@@ -509,6 +536,13 @@ function OrderPage({uid}) {
                     style={{position:"absolute", inset:0, width:"100%",
                       height:"100%", objectFit:"cover"}}
                     onError={e=>e.target.src=FALLBACK}/>
+                  {noStock && (
+                    <div style={{position:"absolute", bottom:5, right:5,
+                      background:"#f87171dd", color:"#1f0a0a",
+                      borderRadius:6, padding:"2px 8px",
+                      fontFamily:"'Space Grotesk',sans-serif",
+                      fontSize:10, fontWeight:700}}>SIN STOCK</div>
+                  )}
                 </div>
                 <div style={{padding:"8px 10px"}}>
                   <div style={{fontSize:12, fontWeight:600, color:OC.tx,
@@ -516,12 +550,15 @@ function OrderPage({uid}) {
                   <div style={{fontFamily:"'DM Mono',monospace", fontSize:13,
                     fontWeight:700, color:OC.v, marginBottom:8}}>{$(p.price)}</div>
                   {!inCart ? (
-                    <button onClick={()=>addItem(p)}
-                      style={{width:"100%", background:`linear-gradient(135deg,${OC.v},${OC.vm})`,
-                        border:"none", borderRadius:7, color:"#0f0a1e",
+                    <button onClick={()=>addItem(p)} disabled={noStock}
+                      style={{width:"100%",
+                        background: noStock ? OC.card2 : `linear-gradient(135deg,${OC.v},${OC.vm})`,
+                        border:"none", borderRadius:7,
+                        color: noStock ? OC.tx3 : "#0f0a1e",
                         padding:"7px 0", fontFamily:"'Space Grotesk',sans-serif",
-                        fontWeight:700, fontSize:12, cursor:"pointer"}}>
-                      + Agregar
+                        fontWeight:700, fontSize:12,
+                        cursor: noStock ? "not-allowed" : "pointer"}}>
+                      {noStock ? "Agotado" : "+ Agregar"}
                     </button>
                   ) : (
                     <div style={{display:"flex", alignItems:"center",
@@ -1434,6 +1471,7 @@ function StockModal({p, onClose, onSave}) {
     if (mode==="remove" && n > current) return setErr("No podés quitar más de lo que hay")
     onSave({
       productId: p.id,
+      productName: p.name,
       newStock:  result,
       movement: {
         type:    mode==="add" ? "ingreso" : mode==="remove" ? "salida" : "ajuste",
@@ -2071,7 +2109,7 @@ export default function App() {
 
   // ── STOCK: descuenta (sign=-1) o devuelve (sign=+1) según items vendidos ──
   // ── Guardar movimiento de stock manual (desde StockModal) ──────────────
-  const saveStock = ({productId, newStock, movement}) => {
+  const saveStock = ({productId, productName, newStock, movement}) => {
     if (!user) return
     const colPath = lista === "mayorista"
       ? `users/${user.uid}/products_mayorista`
@@ -2086,7 +2124,7 @@ export default function App() {
     // Registrar movimiento en historial de inventario
     addDoc(collection(db, `users/${user.uid}/stock_movements`), {
       product_id:   productId,
-      product_name: activeProds.find(p=>p.id===productId)?.name || "",
+      product_name: productName || activeProds.find(p=>p.id===productId)?.name || "",
       lista:        lista,
       type:         movement.type,
       qty:          movement.qty,
@@ -2139,6 +2177,8 @@ export default function App() {
     const saleToDel = sales.find(s => s.id===id)
     if (saleToDel) applyStockChange(saleToDel.items||[], saleToDel.lista||"minorista", +1)
     setSales(prev => prev.filter(s => s.id!==id))
+    setDashSales(prev => prev.filter(s => s.id!==id))
+    setVendSales(prev => prev.filter(s => s.id!==id))
     setDelSaleModal(null); toast("Venta eliminada — stock devuelto")
     if (!id.startsWith("_")) deleteDoc(doc(db,`users/${user.uid}/sales`,id)).catch(console.warn)
   }
@@ -2295,6 +2335,7 @@ export default function App() {
     })
     const prodList = Object.values(prods).sort((a,b) => b.qty - a.qty)
     const totalVentas    = shiftSales.reduce((s,v)=>s+v.total,0)
+    const totalDescuentos= shiftSales.reduce((s,v)=>s+(v.discount||0),0)
     const totalEfectivo  = shiftSales.reduce((s,v)=>s+(v.cash_paid||0),0)
     const totalMP        = shiftSales.reduce((s,v)=>s+(v.mp_paid||0),0)
     const totalArticulos = shiftSales.reduce((s,v)=>s+(v.items||[]).reduce((a,i)=>a+i.qty,0),0)
@@ -2346,6 +2387,7 @@ export default function App() {
     <div class="stat"><div class="label">Artículos</div><div class="val">${totalArticulos}</div></div>
     <div class="stat"><div class="label">Efectivo</div><div class="val">${money(totalEfectivo)}</div></div>
     <div class="stat"><div class="label">Transfer / MP</div><div class="val">${money(totalMP)}</div></div>
+    ${totalDescuentos>0 ? `<div class="stat" style="background:#fef2f2"><div class="label" style="color:#dc2626">🏷️ Descuentos</div><div class="val" style="color:#dc2626">−${money(totalDescuentos)}</div><div class="sub-val">El total general ya los incluye</div></div>` : ""}
     <div class="stat" style="background:#f0fdf4"><div class="label" style="color:#059669">🏷️ Total Minorista</div><div class="val" style="color:#059669">${money(minorTotal)}</div><div class="sub-val">${minorSales.length} ventas · ${minorArticulos} artículos</div></div>
     <div class="stat" style="background:#fffbeb"><div class="label" style="color:#d97706">📦 Total Mayorista</div><div class="val" style="color:#d97706">${money(mayorTotal)}</div><div class="sub-val">${mayorSales.length} ventas · ${mayorArticulos} artículos</div></div>
   </div>
@@ -3435,10 +3477,10 @@ export default function App() {
                       </div>
                       <p style={{fontSize:13, color:C.tx2, lineHeight:1.5,
                         fontFamily:"'DM Sans',sans-serif",
-                        marginBottom:(s.change_amount>0||s.method==="mixto")?6:0}}>
+                        marginBottom:(s.change_amount>0||s.method==="mixto"||(s.discount||0)>0)?6:0}}>
                         {(s.items||[]).map(it=>`${it.product_name} ×${it.qty}`).join("  ·  ")}
                       </p>
-                      {(s.method==="mixto" || s.change_amount>0) && (
+                      {(s.method==="mixto" || s.change_amount>0 || (s.discount||0)>0) && (
                         <div style={{display:"flex", gap:7, flexWrap:"wrap", marginTop:5}}>
                           {s.method==="mixto" && <>
                             <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
@@ -3454,6 +3496,14 @@ export default function App() {
                               📲 {$(s.mp_paid)}
                             </span>
                           </>}
+                          {(s.discount||0) > 0 && (
+                            <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
+                              color:C.er, background:C.erbg, padding:"3px 10px",
+                              borderRadius:20, fontWeight:600,
+                              border:`1px solid ${C.er}33`}}>
+                              🏷️ −{$(s.discount)}
+                            </span>
+                          )}
                           {s.change_amount > 0 && (
                             <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
                               color:C.am, background:C.ambg, padding:"3px 10px",
