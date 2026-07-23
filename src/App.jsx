@@ -1834,6 +1834,7 @@ export default function App() {
   const [payModal,   setPayModal]   = useState(false)
   const [delModal,   setDelModal]   = useState(null)
   const [mobile,     setMobile]     = useState(window.innerWidth < 768)
+  const [online,     setOnline]     = useState(navigator.onLine)
   const [mView,      setMView]      = useState("prods")
   const [search,     setSearch]     = useState("")
 
@@ -1841,6 +1842,17 @@ export default function App() {
     const h = () => setMobile(window.innerWidth < 768)
     window.addEventListener("resize", h)
     return () => window.removeEventListener("resize", h)
+  }, [])
+
+  useEffect(() => {
+    const on  = () => { setOnline(true);  toast("🌐 Conexión restablecida — sincronizando") }
+    const off = () => { setOnline(false) }
+    window.addEventListener("online", on)
+    window.addEventListener("offline", off)
+    return () => {
+      window.removeEventListener("online", on)
+      window.removeEventListener("offline", off)
+    }
   }, [])
 
   useEffect(() => {
@@ -2967,6 +2979,21 @@ export default function App() {
             </div>
           </div>
         </header>
+
+        {/* ── BANNER OFFLINE ── */}
+        {!online && (
+          <div style={{background:`linear-gradient(135deg,${C.am}22,${C.am}11)`,
+            borderBottom:`1px solid ${C.am}44`,
+            padding:"8px 16px", display:"flex", alignItems:"center",
+            justifyContent:"center", gap:8,
+            position:"sticky", top:62, zIndex:99}}>
+            <span style={{fontSize:14}}>📡</span>
+            <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:12,
+              fontWeight:600, color:C.am, letterSpacing:.3}}>
+              Sin conexión — podés seguir vendiendo, se sincroniza al volver internet
+            </span>
+          </div>
+        )}
 
         {/* ── BOTTOM NAV — solo en celular ── */}
         {mobile && (
