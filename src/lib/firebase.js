@@ -1,6 +1,10 @@
 import { initializeApp } from 'firebase/app'
-import { getFirestore }  from 'firebase/firestore'
-import { getAuth }       from 'firebase/auth'
+import {
+  initializeFirestore,
+  persistentLocalCache,
+  persistentMultipleTabManager,
+} from 'firebase/firestore'
+import { getAuth } from 'firebase/auth'
 
 const app = initializeApp({
   apiKey:            import.meta.env.VITE_FIREBASE_API_KEY,
@@ -11,5 +15,15 @@ const app = initializeApp({
   appId:             import.meta.env.VITE_FIREBASE_APP_ID,
 })
 
-export const db   = getFirestore(app)
+// Caché local persistente:
+//  - Las lecturas se sirven desde el dispositivo si no hay internet
+//  - Las escrituras (ventas, stock) quedan en cola y se sincronizan
+//    automáticamente cuando vuelve la conexión
+//  - Multi-tab: funciona aunque tengas la app abierta en varias pestañas
+export const db = initializeFirestore(app, {
+  localCache: persistentLocalCache({
+    tabManager: persistentMultipleTabManager(),
+  }),
+})
+
 export const auth = getAuth(app)
