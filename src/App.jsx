@@ -1027,7 +1027,7 @@ function StatusScreen({icon, title, body, note, btnLabel, btnColor, onLogout}) {
 /* ════════════════════════════════════════════════════════════════════════
    PRODUCT MODAL
 ════════════════════════════════════════════════════════════════════════ */
-function ProductModal({p, categories=[], onClose, onSave}) {
+function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
   const edit = !!p?.id
   const [name,    setName]    = useState(p?.name  || "")
   const [price,   setPrice]   = useState(p?.price || "")
@@ -1040,6 +1040,8 @@ function ProductModal({p, categories=[], onClose, onSave}) {
   const [stockMin,setStockMin]= useState(p?.stock_min ?? "")
   const [unit,    setUnit]    = useState(p?.unit || "unidad")
   const [barcode, setBarcode] = useState(p?.barcode || "")
+  const [isCombo, setIsCombo]     = useState(!!(p?.combo && p.combo.length))
+  const [comboItems, setComboItems] = useState(p?.combo || [])
   const [scanning, setScanning] = useState(false)
   const [b64,     setB64]     = useState(null)
   const [busy,    setBusy]    = useState(false)
@@ -1080,6 +1082,9 @@ function ProductModal({p, categories=[], onClose, onSave}) {
       stock_min: stockMin==="" ? 0 : parseFloat(stockMin)||0,
       unit: unit||"unidad",
       barcode: barcode.trim(),
+      combo: isCombo ? comboItems.filter(c => c.product_id && (parseFloat(c.qty)||0) > 0)
+                        .map(c => ({product_id:c.product_id, product_name:c.product_name, qty:parseFloat(c.qty)||1}))
+                     : [],
     })
   }
 
@@ -1221,6 +1226,76 @@ function ProductModal({p, categories=[], onClose, onSave}) {
           <p style={{fontSize:11, color:C.tx3, marginTop:10, lineHeight:1.5}}>
             Dejá el stock vacío si este producto no maneja inventario.
           </p>
+        </div>
+
+        {/* combo */}
+        <div style={{marginBottom:18, background:C.card2, borderRadius:12,
+          padding:"14px 14px 16px", border:`1px solid ${isCombo ? C.v+"44" : C.br}`}}>
+          <div style={{display:"flex", alignItems:"center",
+            justifyContent:"space-between", marginBottom: isCombo ? 14 : 0}}>
+            <label style={{fontFamily:"'Space Grotesk',sans-serif",
+              fontSize:11, fontWeight:600, color: isCombo ? C.v : C.tx3,
+              letterSpacing:1, textTransform:"uppercase"}}>
+              🎁 ¿Es un combo?
+            </label>
+            <button type="button" onClick={()=>setIsCombo(!isCombo)}
+              style={{width:46, height:26, borderRadius:20, border:"none",
+                position:"relative", cursor:"pointer",
+                background: isCombo ? `linear-gradient(135deg,${C.v},${C.vm})` : C.card,
+                transition:"background .2s"}}>
+              <span style={{position:"absolute", top:3,
+                left: isCombo ? 23 : 3, width:20, height:20,
+                borderRadius:"50%", background:"#fff",
+                transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
+            </button>
+          </div>
+
+          {isCombo && (
+            <>
+              <p style={{fontSize:11, color:C.tx3, marginBottom:12, lineHeight:1.5}}>
+                Al vender este combo se descuenta el stock de cada componente.
+              </p>
+              {comboItems.map((c, idx) => (
+                <div key={idx} style={{display:"flex", gap:6, marginBottom:8,
+                  alignItems:"center"}}>
+                  <select value={c.product_id||""}
+                    onChange={e=>{
+                      const sel = prods.find(x=>x.id===e.target.value)
+                      setComboItems(prev => prev.map((x,i)=> i===idx
+                        ? {...x, product_id:e.target.value, product_name:sel?.name||""}
+                        : x))
+                    }}
+                    style={{...I, flex:1, background:C.card, fontSize:13,
+                      padding:"9px 10px", cursor:"pointer", appearance:"none"}}>
+                    <option value="">Elegí producto...</option>
+                    {prods.filter(x => x.id!==p?.id && !(x.combo&&x.combo.length))
+                      .map(x => <option key={x.id} value={x.id}>{x.name}</option>)}
+                  </select>
+                  <input type="text" inputMode="numeric" value={c.qty}
+                    onChange={e=>{
+                      const v = e.target.value.replace(/[^0-9]/g,"")
+                      setComboItems(prev => prev.map((x,i)=> i===idx ? {...x, qty:v} : x))
+                    }}
+                    placeholder="Cant."
+                    style={{...I, width:60, background:C.card, fontSize:13,
+                      padding:"9px 8px", textAlign:"center", flexShrink:0}}/>
+                  <button type="button"
+                    onClick={()=>setComboItems(prev => prev.filter((_,i)=>i!==idx))}
+                    style={{width:32, height:36, background:C.erbg,
+                      border:`1px solid ${C.er}33`, borderRadius:8, color:C.er,
+                      fontSize:14, flexShrink:0}}>✕</button>
+                </div>
+              ))}
+              <button type="button"
+                onClick={()=>setComboItems(prev => [...prev, {product_id:"", product_name:"", qty:"1"}])}
+                style={{width:"100%", padding:"9px 0", background:C.vbg,
+                  border:`1px dashed ${C.v}55`, borderRadius:10, color:C.v,
+                  fontFamily:"'DM Sans',sans-serif", fontWeight:600, fontSize:13,
+                  marginTop:4}}>
+                + Agregar componente
+              </button>
+            </>
+          )}
         </div>
 
         {/* código de barras */}
@@ -1998,12 +2073,34 @@ export default function App() {
     return p.name.toLowerCase().includes(q) || (p.barcode||"").includes(search.trim())
   })
 
+  // Cuántos combos alcanza a armar el stock de los componentes (null = ilimitado)
+  const comboAvail = (p, list) => {
+    if (!p.combo || !p.combo.length) return null
+    let min = Infinity, managed = false
+    p.combo.forEach(c => {
+      const cp = list.find(x => x.id === c.product_id) || list.find(x => x.name === c.product_name)
+      if (cp && cp.stock !== null && cp.stock !== undefined) {
+        managed = true
+        min = Math.min(min, Math.floor((cp.stock||0) / (c.qty||1)))
+      }
+    })
+    return managed ? Math.max(min, 0) : null
+  }
+
   const addItem = p => {
     // Bloqueo de venta sin stock (si está activado en config)
-    if (blockNoStock && p.stock !== null && p.stock !== undefined) {
+    if (blockNoStock) {
       const inCartQty = cart.find(i => i.id===p.id)?.qty || 0
-      if (p.stock <= 0) { toast(`${p.name}: sin stock`, true); return }
-      if (inCartQty >= p.stock) { toast(`${p.name}: no hay más stock (${p.stock})`, true); return }
+      if (p.combo && p.combo.length) {
+        const avail = comboAvail(p, activeProds)
+        if (avail !== null && inCartQty >= avail) {
+          toast(avail<=0 ? `${p.name}: sin stock de componentes` : `${p.name}: solo alcanzan ${avail} combos`, true)
+          return
+        }
+      } else if (p.stock !== null && p.stock !== undefined) {
+        if (p.stock <= 0) { toast(`${p.name}: sin stock`, true); return }
+        if (inCartQty >= p.stock) { toast(`${p.name}: no hay más stock (${p.stock})`, true); return }
+      }
     }
     setCart(prev => {
       const ex = prev.find(i => i.id===p.id)
@@ -2027,9 +2124,17 @@ export default function App() {
     // Al aumentar cantidad manualmente, respetar bloqueo de stock
     if (blockNoStock && q > 0) {
       const inCart = cart.find(i => i.id===id)
-      if (inCart && inCart.stock !== null && inCart.stock !== undefined && q > inCart.stock) {
-        toast(`Solo hay ${inCart.stock} en stock`, true)
-        return
+      if (inCart) {
+        if (inCart.combo && inCart.combo.length) {
+          const avail = comboAvail(inCart, activeProds)
+          if (avail !== null && q > avail) {
+            toast(`Solo alcanzan ${avail} combos con el stock actual`, true)
+            return
+          }
+        } else if (inCart.stock !== null && inCart.stock !== undefined && q > inCart.stock) {
+          toast(`Solo hay ${inCart.stock} en stock`, true)
+          return
+        }
       }
     }
     setCart(prev =>
@@ -2083,6 +2188,7 @@ export default function App() {
       stock_min: p.stock_min ?? 0,
       unit:      p.unit || "unidad",
       barcode:   p.barcode || "",
+      combo:     p.combo || [],
     }
     // Validar que no exista otro producto con el mismo código de barras
     if (p.barcode) {
@@ -2156,30 +2262,45 @@ export default function App() {
     const setter  = listaVenta === "mayorista" ? setMayorProds : setProds
     const current = listaVenta === "mayorista" ? mayorProds : prods
 
-    items.forEach(it => {
-      // Buscar por ID primero (ventas nuevas), por nombre como fallback (ventas viejas)
-      const prod = current.find(p => it.product_id && p.id === it.product_id)
-                || current.find(p => p.name === it.product_name)
+    // Ajusta el stock de un producto individual y registra el movimiento
+    const adjustOne = (prod, qty, reasonExtra) => {
       if (!prod || prod.stock === null || prod.stock === undefined) return
       const prev = prod.stock || 0
-      const newStock = prev + sign * it.qty
-      // Optimistic UI
-      setter(prev => prev.map(p => p.id===prod.id ? {...p, stock:newStock} : p))
-      // Firebase
+      const newStock = prev + sign * qty
+      setter(list => list.map(p => p.id===prod.id ? {...p, stock:newStock} : p))
       if (!String(prod.id).startsWith("_"))
         updateDoc(doc(db, colPath, prod.id), {stock:newStock}).catch(console.warn)
-      // Registrar movimiento (venta = salida, anulación = devolución)
       addDoc(collection(db, `users/${user.uid}/stock_movements`), {
         product_id:   prod.id,
         product_name: prod.name,
         lista:        listaVenta,
         type:         sign < 0 ? "venta" : "devolucion",
-        qty:          it.qty,
+        qty:          qty,
         stock_prev:   prev,
         stock_next:   newStock,
-        reason:       sign < 0 ? "Venta" : "Anulación de venta",
+        reason:       (sign < 0 ? "Venta" : "Anulación de venta") + (reasonExtra||""),
         created_at:   Timestamp.now(),
       }).catch(console.warn)
+    }
+
+    items.forEach(it => {
+      // Buscar por ID primero (ventas nuevas), por nombre como fallback (ventas viejas)
+      const prod = current.find(p => it.product_id && p.id === it.product_id)
+                || current.find(p => p.name === it.product_name)
+      if (!prod) return
+
+      // ── COMBO: descontar componentes en lugar del combo ──
+      if (prod.combo && prod.combo.length) {
+        prod.combo.forEach(cmp => {
+          const compProd = current.find(x => x.id === cmp.product_id)
+                        || current.find(x => x.name === cmp.product_name)
+          if (compProd) adjustOne(compProd, it.qty * (cmp.qty||1), ` (combo: ${prod.name})`)
+        })
+        return
+      }
+
+      if (prod.stock === null || prod.stock === undefined) return
+      adjustOne(prod, it.qty)
     })
   }
 
@@ -2682,7 +2803,22 @@ export default function App() {
                 <div style={{position:"absolute", inset:0,
                   background:`linear-gradient(to top, ${C.card}cc 0%, transparent 55%)`}}/>
                 {/* stock badge */}
-                {p.stock !== null && p.stock !== undefined && (() => {
+                {p.combo && p.combo.length ? (() => {
+                  const avail = comboAvail(p, activeProds)
+                  const noSt  = avail !== null && avail <= 0
+                  const low   = avail !== null && !noSt && avail <= 3
+                  const bg = noSt ? C.er : low ? C.am : C.v
+                  return (
+                    <div style={{position:"absolute", bottom:5, right:5,
+                      background:`${bg}dd`, color:"#0f0a1e",
+                      borderRadius:6, padding: mobile ? "1px 5px" : "2px 8px",
+                      fontFamily:"'Space Grotesk',monospace",
+                      fontSize: mobile ? 8 : 10, fontWeight:700,
+                      lineHeight:1.3, zIndex:3}}>
+                      🎁 {avail === null ? "COMBO" : noSt ? "SIN STOCK" : `×${avail}`}
+                    </div>
+                  )
+                })() : p.stock !== null && p.stock !== undefined && (() => {
                   const noStock  = p.stock <= 0
                   const lowStock = !noStock && p.stock <= (p.stock_min||0)
                   const bg = noStock ? C.er : lowStock ? C.am : C.ok
@@ -4137,6 +4273,7 @@ export default function App() {
       {scanOpen && <ScannerModal onClose={()=>setScanOpen(false)} onScan={handleScan}/>}
       {prodModal && <ProductModal p={prodModal.p}
         categories={[...new Set(activeProds.map(p=>p.category).filter(Boolean))].sort()}
+        prods={activeProds}
         onClose={()=>setProdModal(null)} onSave={saveProd}/>}
       {payModal  && <PayModal total={cartFinal} onClose={()=>{ setPayModal(false) }} onPay={paySale}/>}
       {delModal  && <Del name={delModal.name} onYes={()=>delProd(delModal.id)} onNo={()=>setDelModal(null)}/>}
