@@ -19,6 +19,7 @@ const isAdminEmail = (email) => (email||"").trim().toLowerCase() === ADMIN_EMAIL
 /* ─── HELPERS ────────────────────────────────────────────────────────── */
 const $ = (n) => new Intl.NumberFormat("es-AR",{style:"currency",currency:"ARS",minimumFractionDigits:0}).format(n||0)
 const today = () => new Date().toISOString().split("T")[0]
+const round2 = n => Math.round((n||0)*100)/100
 const uid = () => "_" + Math.random().toString(36).slice(2)
 const FALLBACK = "https://images.unsplash.com/photo-1546868871-7041f2a55e12?w=300&q=80"
 const fmtDate = (ts) => {
@@ -1031,6 +1032,7 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
   const edit = !!p?.id
   const [name,    setName]    = useState(p?.name  || "")
   const [price,   setPrice]   = useState(p?.price || "")
+  const [cost,    setCost]    = useState(p?.cost ?? "")
   const [url,     setUrl]     = useState(p?.img   || "")
   const [preview, setPreview] = useState(p?.img   || "")
   const [category,setCategory]= useState(p?.category || "")
@@ -1062,6 +1064,25 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
 
   useEffect(() => () => { if (blobRef.current) URL.revokeObjectURL(blobRef.current) }, [])
 
+  // ── Costos y rentabilidad (cálculo en vivo, sin hooks) ──
+  const priceN = parseFloat(price) || 0
+  const comboCost = (() => {
+    let total = 0
+    const missing = []
+    comboItems.forEach(c => {
+      if (!c.product_id) return
+      const cp = prods.find(x => x.id === c.product_id)
+      const q  = parseFloat(c.qty) || 0
+      if (cp && typeof cp.cost === "number") total += cp.cost * q
+      else missing.push(c.product_name || (cp && cp.name) || "producto")
+    })
+    return {total: round2(total), missing}
+  })()
+  const costN      = isCombo ? comboCost.total : (cost === "" ? null : parseFloat(cost))
+  const hasCost    = costN !== null && !isNaN(costN)
+  const unitProfit = hasCost ? round2(priceN - costN) : null
+  const marginPct  = hasCost && priceN > 0 ? Math.round(((priceN - costN) / priceN) * 1000) / 10 : null
+
   const genBarcode = () => {
     // Genera un código EAN-13 numérico aleatorio (13 dígitos)
     let code = "200" // prefijo de uso interno
@@ -1074,16 +1095,20 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
     const pr = parseFloat(price)
     if (!pr || pr <= 0) return setErr("Precio inválido")
     if (busy) return setErr("Esperá la foto...")
+    const validComps = comboItems.filter(c => c.product_id && (parseFloat(c.qty)||0) > 0)
+    if (isCombo && !validComps.length) return setErr("Agregá al menos un componente al combo")
+    if (!isCombo && cost !== "" && (isNaN(parseFloat(cost)) || parseFloat(cost) < 0)) return setErr("Costo inválido")
     const finalCat = (addingCat ? newCat.trim() : category.trim())
     onSave({
       id:p?.id, name:name.trim(), price:pr,
       img:b64||url.trim()||FALLBACK, category:finalCat,
-      stock: stock==="" ? null : parseFloat(stock)||0,
-      stock_min: stockMin==="" ? 0 : parseFloat(stockMin)||0,
+      // El combo NO maneja stock propio ni costo propio: se calcula de sus componentes
+      cost: isCombo ? null : (cost==="" ? null : parseFloat(cost)||0),
+      stock: isCombo || stock==="" ? null : parseFloat(stock)||0,
+      stock_min: isCombo || stockMin==="" ? 0 : parseFloat(stockMin)||0,
       unit: unit||"unidad",
       barcode: barcode.trim(),
-      combo: isCombo ? comboItems.filter(c => c.product_id && (parseFloat(c.qty)||0) > 0)
-                        .map(c => ({product_id:c.product_id, product_name:c.product_name, qty:parseFloat(c.qty)||1}))
+      combo: isCombo ? validComps.map(c => ({product_id:c.product_id, product_name:c.product_name, qty:parseFloat(c.qty)||1}))
                      : [],
     })
   }
@@ -1143,6 +1168,40 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
             onFocus={focusIn} onBlur={focusOut}/>
         </div>
 
+        {/* costo */}
+        <div style={{marginBottom:18}}>
+          <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
+            fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+            textTransform:"uppercase", marginBottom:6}}>
+            {isCombo ? "Costo del combo (automático)" : "Costo"}
+          </label>
+          {isCombo ? (
+            <div style={{...I, background:C.card, display:"flex", alignItems:"center",
+              justifyContent:"space-between", gap:8}}>
+              <span style={{fontFamily:"'Space Grotesk',monospace", fontWeight:700, color:C.v}}>
+                {$(comboCost.total)}
+              </span>
+              <span style={{fontSize:11, color:C.tx3}}>suma de sus componentes</span>
+            </div>
+          ) : (
+            <input type="number" inputMode="decimal" value={cost}
+              onChange={e=>setCost(e.target.value)}
+              placeholder="Lo que te cuesta cada unidad" min={0} style={I}
+              onFocus={focusIn} onBlur={focusOut}/>
+          )}
+          {hasCost && priceN > 0 && (
+            <p style={{fontSize:12, marginTop:8, lineHeight:1.5,
+              color: unitProfit >= 0 ? C.ok : C.er, fontWeight:600}}>
+              Ganancia por unidad: {$(unitProfit)}{marginPct !== null ? ` · Margen ${marginPct}%` : ""}
+            </p>
+          )}
+          {isCombo && comboCost.missing.length > 0 && (
+            <p style={{fontSize:11, marginTop:6, color:C.am, lineHeight:1.5}}>
+              ⚠️ Sin costo cargado en: {comboCost.missing.join(", ")}. El costo del combo está incompleto.
+            </p>
+          )}
+        </div>
+
         {/* categoría */}
         <div style={{marginBottom:18}}>
           <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
@@ -1179,7 +1238,8 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
           )}
         </div>
 
-        {/* stock */}
+        {/* stock — los combos NO tienen stock propio */}
+        {!isCombo && (
         <div style={{marginBottom:18, background:C.card2, borderRadius:12,
           padding:"14px 14px 16px", border:`1px solid ${C.br}`}}>
           <label style={{display:"block", fontFamily:"'Space Grotesk',sans-serif",
@@ -1227,6 +1287,7 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
             Dejá el stock vacío si este producto no maneja inventario.
           </p>
         </div>
+        )}
 
         {/* combo */}
         <div style={{marginBottom:18, background:C.card2, borderRadius:12,
@@ -1294,6 +1355,32 @@ function ProductModal({p, categories=[], prods=[], onClose, onSave}) {
                   marginTop:4}}>
                 + Agregar componente
               </button>
+
+              {comboItems.some(c => c.product_id) && (
+                <div style={{marginTop:12, background:C.card, borderRadius:10,
+                  padding:"10px 12px", border:`1px solid ${C.br}`}}>
+                  {comboItems.filter(c => c.product_id).map((c, i) => {
+                    const cp    = prods.find(x => x.id === c.product_id)
+                    const q     = parseFloat(c.qty) || 0
+                    const known = cp && typeof cp.cost === "number"
+                    return (
+                      <div key={i} style={{display:"flex", justifyContent:"space-between",
+                        gap:8, fontSize:12, color:C.tx2, padding:"3px 0"}}>
+                        <span>{c.product_name || (cp && cp.name)} ×{q}</span>
+                        <span style={{fontFamily:"'DM Mono',monospace", color: known ? C.tx : C.am}}>
+                          {known ? $(cp.cost * q) : "sin costo"}
+                        </span>
+                      </div>
+                    )
+                  })}
+                  <div style={{display:"flex", justifyContent:"space-between", marginTop:6,
+                    paddingTop:8, borderTop:`1px solid ${C.br}`,
+                    fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:13}}>
+                    <span style={{color:C.tx2}}>Costo total del combo</span>
+                    <span style={{color:C.v}}>{$(comboCost.total)}</span>
+                  </div>
+                </div>
+              )}
             </>
           )}
         </div>
@@ -1400,6 +1487,8 @@ function ScannerModal({onClose, onScan}) {
   const [lastCode, setLastCode] = useState("")
   const scannerRef = useRef(null)
   const lastScanRef = useRef({code:"", time:0})
+  const onScanRef   = useRef(onScan)
+  onScanRef.current = onScan   // el escáner siempre usa el handler del último render
 
   useEffect(() => {
     let cancelled = false
@@ -1445,7 +1534,7 @@ function ScannerModal({onClose, onScan}) {
             lastScanRef.current = {code:decodedText, time:now}
             beep()
             setLastCode(decodedText)
-            onScan(decodedText)
+            onScanRef.current(decodedText)
           },
           () => {}  // ignore per-frame decode errors
         )
@@ -1520,6 +1609,223 @@ function ScannerModal({onClose, onScan}) {
             color:C.tx, fontFamily:"'Space Grotesk',sans-serif",
             fontWeight:700, fontSize:15}}>
           Cerrar escáner
+        </button>
+      </div>
+    </div>
+  )
+}
+
+/* ════════════════════════════════════════════════════════════════════════
+   STOCK ENTRY MODAL — ingreso de mercadería con costo de compra
+════════════════════════════════════════════════════════════════════════ */
+function StockEntryModal({lists, defaultLista, onClose, onSave}) {
+  const localDate = () => {
+    const d = new Date(), pad = n => String(n).padStart(2,"0")
+    return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`
+  }
+  const [lista,    setLista]    = useState(defaultLista || "minorista")
+  const [pid,      setPid]      = useState("")
+  const [qty,      setQty]      = useState("")
+  const [cost,     setCost]     = useState("")
+  const [date,     setDate]     = useState(localDate())
+  const [supplier, setSupplier] = useState("")
+  const [invoice,  setInvoice]  = useState("")
+  const [updCost,  setUpdCost]  = useState(true)
+  const [err,      setErr]      = useState("")
+
+  // Los combos no tienen stock propio: no se pueden "ingresar"
+  const options = (lists[lista] || [])
+    .filter(p => !(p.combo && p.combo.length))
+    .slice().sort((a,b) => a.name.localeCompare(b.name))
+  const prod     = options.find(p => p.id === pid)
+  const qtyN     = parseInt(qty, 10) || 0
+  const costN    = cost === "" ? null : parseFloat(cost)
+  const costOk   = costN !== null && !isNaN(costN) && costN >= 0
+  const total    = costOk ? round2(qtyN * costN) : 0
+  const curStock = prod ? (prod.stock ?? 0) : 0
+  const curCost  = prod && typeof prod.cost === "number" ? prod.cost : null
+
+  const save = () => {
+    if (!prod)         return setErr("Elegí un producto")
+    if (qtyN <= 0)     return setErr("Ingresá una cantidad mayor a 0")
+    if (!costOk)       return setErr("Ingresá el costo unitario de compra")
+    if (!date)         return setErr("Elegí la fecha de ingreso")
+    onSave({
+      lista, productId:prod.id, productName:prod.name,
+      qty:qtyN, unitCost:costN, date,
+      supplier:supplier.trim(), invoice:invoice.trim(), updateCost:updCost,
+    })
+  }
+
+  const I = {
+    width:"100%", background:C.card2, border:`1px solid ${C.br}`,
+    borderRadius:10, color:C.tx, padding:"12px 14px", fontSize:15,
+    outline:"none", fontFamily:"'DM Sans',sans-serif", display:"block",
+    minWidth:0, maxWidth:"100%",
+  }
+  const L = {display:"block", fontFamily:"'Space Grotesk',sans-serif",
+    fontSize:11, fontWeight:600, color:C.tx3, letterSpacing:1,
+    textTransform:"uppercase", marginBottom:6}
+  const fi = e => e.target.style.borderColor = C.v
+  const fo = e => e.target.style.borderColor = C.br
+  const arrow = `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%23a78bfa' stroke-width='3'%3E%3Cpath d='M6 9l6 6 6-6'/%3E%3C/svg%3E")`
+
+  return (
+    <div style={{position:"fixed", inset:0, zIndex:800,
+      background:"rgba(6,4,17,.85)",
+      display:"flex", alignItems:"flex-end", justifyContent:"center"}}
+      onClick={onClose}>
+      <div className="fadeUp"
+        style={{background:C.card, borderRadius:"20px 20px 0 0",
+          padding:"22px 20px 32px", width:"100%", maxWidth:480,
+          maxHeight:"94vh", overflowY:"auto", position:"relative",
+          border:`1px solid ${C.br}`, borderBottom:"none",
+          boxShadow:`0 -12px 48px rgba(0,0,0,.7)`}}
+        onClick={e => e.stopPropagation()}>
+
+        <div style={{width:36, height:4, background:C.br, borderRadius:4,
+          margin:"-6px auto 18px"}}/>
+        <button onClick={onClose}
+          style={{position:"absolute", top:18, right:18, background:C.vbg,
+            border:`1px solid ${C.br}`, color:C.v, width:32, height:32,
+            borderRadius:9, fontSize:16, display:"flex",
+            alignItems:"center", justifyContent:"center", fontWeight:700}}>✕</button>
+
+        <h2 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:19,
+          fontWeight:700, color:C.tx, marginBottom:4}}>📥 Ingreso de mercadería</h2>
+        <p style={{fontSize:12, color:C.tx3, marginBottom:18, lineHeight:1.5}}>
+          Suma stock y guarda el costo al que compraste.
+        </p>
+
+        {/* lista */}
+        <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",
+          gap:8, marginBottom:16}}>
+          {[["minorista","🏷️ Minorista"],["mayorista","📦 Mayorista"]].map(([k,l]) => (
+            <button key={k} type="button" onClick={()=>{setLista(k); setPid(""); setErr("")}}
+              style={{padding:"10px 4px", borderRadius:10,
+                background: lista===k ? C.vbg : C.card2,
+                color:      lista===k ? C.v : C.tx2,
+                border:`1px solid ${lista===k ? C.v : C.br}`,
+                fontFamily:"'DM Sans',sans-serif", fontWeight:700, fontSize:13}}>
+              {l}
+            </button>
+          ))}
+        </div>
+
+        {/* producto */}
+        <div style={{marginBottom:14}}>
+          <label style={L}>Producto *</label>
+          <select value={pid} onChange={e=>{setPid(e.target.value); setErr("")}}
+            style={{...I, cursor:"pointer", appearance:"none",
+              backgroundImage:arrow, backgroundRepeat:"no-repeat",
+              backgroundPosition:"right 14px center", paddingRight:36}}>
+            <option value="">Elegí un producto...</option>
+            {options.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          {prod && (
+            <p style={{fontSize:11, color:C.tx3, marginTop:6, lineHeight:1.5}}>
+              Stock actual: <b style={{color:C.v}}>{prod.stock ?? "sin inventario"}</b>
+              {curCost !== null && <> · Costo actual: <b style={{color:C.v}}>{$(curCost)}</b></>}
+            </p>
+          )}
+        </div>
+
+        {/* cantidad + costo */}
+        <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",
+          gap:10, marginBottom:14}}>
+          <div style={{minWidth:0}}>
+            <label style={L}>Cantidad *</label>
+            <input type="text" inputMode="numeric" value={qty}
+              onChange={e=>{setQty(e.target.value.replace(/[^0-9]/g,"")); setErr("")}}
+              placeholder="Ej: 10" style={I} onFocus={fi} onBlur={fo}/>
+          </div>
+          <div style={{minWidth:0}}>
+            <label style={L}>Costo unitario *</label>
+            <input type="text" inputMode="decimal" value={cost}
+              onChange={e=>{setCost(e.target.value.replace(/[^0-9.,]/g,"").replace(",",".")); setErr("")}}
+              placeholder="Ej: 300000" style={I} onFocus={fi} onBlur={fo}/>
+          </div>
+        </div>
+
+        {/* fecha */}
+        <div style={{marginBottom:14}}>
+          <label style={L}>Fecha de ingreso *</label>
+          <input type="date" value={date} onChange={e=>setDate(e.target.value)}
+            style={{...I, colorScheme:"dark", WebkitAppearance:"none", appearance:"none"}}
+            onFocus={fi} onBlur={fo}/>
+        </div>
+
+        {/* proveedor + factura */}
+        <div style={{marginBottom:14}}>
+          <label style={L}>Proveedor (opcional)</label>
+          <input type="text" value={supplier} onChange={e=>setSupplier(e.target.value)}
+            placeholder="Ej: Distribuidora Norte" style={I} onFocus={fi} onBlur={fo}/>
+        </div>
+        <div style={{marginBottom:16}}>
+          <label style={L}>N° factura / remito (opcional)</label>
+          <input type="text" value={invoice} onChange={e=>setInvoice(e.target.value)}
+            placeholder="Ej: 0001-00012345" style={I} onFocus={fi} onBlur={fo}/>
+        </div>
+
+        {/* actualizar costo */}
+        <div style={{display:"flex", alignItems:"center", justifyContent:"space-between",
+          gap:12, background:C.card2, border:`1px solid ${C.br}`, borderRadius:12,
+          padding:"12px 14px", marginBottom:16}}>
+          <div style={{flex:1, minWidth:0}}>
+            <p style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:13,
+              fontWeight:600, color:C.tx, margin:"0 0 2px"}}>
+              Usar este costo para las próximas ventas
+            </p>
+            <p style={{fontSize:11, color:C.tx3, margin:0, lineHeight:1.4}}>
+              Actualiza el costo del producto. Las ventas ya hechas no cambian.
+            </p>
+          </div>
+          <button type="button" onClick={()=>setUpdCost(!updCost)}
+            style={{width:46, height:26, borderRadius:20, border:"none", flexShrink:0,
+              position:"relative", cursor:"pointer",
+              background: updCost ? `linear-gradient(135deg,${C.v},${C.vm})` : C.card,
+              transition:"background .2s"}}>
+            <span style={{position:"absolute", top:3, left: updCost ? 23 : 3,
+              width:20, height:20, borderRadius:"50%", background:"#fff",
+              transition:"left .2s", boxShadow:"0 1px 3px rgba(0,0,0,.4)"}}/>
+          </button>
+        </div>
+
+        {/* preview */}
+        {prod && qtyN > 0 && (
+          <div style={{background:C.card2, borderRadius:12, border:`1px solid ${C.ok}44`,
+            padding:"12px 16px", marginBottom:16}}>
+            <div style={{display:"flex", justifyContent:"space-between", alignItems:"center",
+              marginBottom: costOk ? 8 : 0}}>
+              <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                color:C.tx3, letterSpacing:.5, textTransform:"uppercase"}}>Stock resultante</span>
+              <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:18,
+                fontWeight:700, color:C.ok}}>{curStock} → {curStock + qtyN}</span>
+            </div>
+            {costOk && (
+              <div style={{display:"flex", justifyContent:"space-between", alignItems:"center"}}>
+                <span style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:11,
+                  color:C.tx3, letterSpacing:.5, textTransform:"uppercase"}}>Total de la compra</span>
+                <span style={{fontFamily:"'Space Grotesk',monospace", fontSize:18,
+                  fontWeight:700, color:C.v}}>{$(total)}</span>
+              </div>
+            )}
+          </div>
+        )}
+
+        {err && (
+          <div style={{background:C.erbg, border:`1px solid ${C.er}44`,
+            borderRadius:10, padding:"10px 14px",
+            color:C.er, fontSize:13, marginBottom:14}}>⚠️ {err}</div>
+        )}
+
+        <button onClick={save}
+          style={{width:"100%", border:"none", borderRadius:12, padding:"14px 0",
+            fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:16,
+            color:"#0f0a1e",
+            background:`linear-gradient(135deg,${C.v},${C.vm})`,
+            boxShadow:`0 0 24px ${C.v}44`}}>
+          Confirmar ingreso
         </button>
       </div>
     </div>
@@ -1895,6 +2201,10 @@ export default function App() {
   const [movFrom,    setMovFrom]    = useState(startOfDayDT)
   const [movTo,      setMovTo]      = useState(nowLocalDT)
   const [movType,    setMovType]    = useState("all")
+  const [invView,    setInvView]    = useState("mov")   // mov | ing
+  const [entries,    setEntries]    = useState([])
+  const [loadEnt,    setLoadEnt]    = useState(false)
+  const [entryModal, setEntryModal] = useState(false)
   const [dashSales,  setDashSales]  = useState([])
   const [loadDash,   setLoadDash]   = useState(false)
   const [waNumber,   setWaNumber]   = useState("")
@@ -2021,6 +2331,18 @@ export default function App() {
       .catch(console.warn).finally(() => setLoadMov(false))
   }, [user, tab, movFrom, movTo])
 
+  // Load stock entries (ingresos de mercadería) by date range — solo en la vista Ingresos
+  useEffect(() => {
+    if (!user || tab!=="inventario" || invView!=="ing" || isAdmin) return
+    setLoadEnt(true)
+    queryByRange(collection(db, `users/${user.uid}/stock_entries`), movFrom, movTo)
+      .then(list => {
+        list.sort((a,b)=>(b.created_at?.seconds||0)-(a.created_at?.seconds||0))
+        setEntries(list)
+      })
+      .catch(console.warn).finally(() => setLoadEnt(false))
+  }, [user, tab, invView, movFrom, movTo])
+
   // Load last 30 days of sales for dashboard "most sold" metrics
   useEffect(() => {
     if (!user || !salesCol || tab!=="dash" || isAdmin) return
@@ -2087,24 +2409,58 @@ export default function App() {
     return managed ? Math.max(min, 0) : null
   }
 
-  const addItem = p => {
-    // Bloqueo de venta sin stock (si está activado en config)
-    if (blockNoStock) {
-      const inCartQty = cart.find(i => i.id===p.id)?.qty || 0
-      if (p.combo && p.combo.length) {
-        const avail = comboAvail(p, activeProds)
-        if (avail !== null && inCartQty >= avail) {
-          toast(avail<=0 ? `${p.name}: sin stock de componentes` : `${p.name}: solo alcanzan ${avail} combos`, true)
-          return
-        }
-      } else if (p.stock !== null && p.stock !== undefined) {
-        if (p.stock <= 0) { toast(`${p.name}: sin stock`, true); return }
-        if (inCartQty >= p.stock) { toast(`${p.name}: no hay más stock (${p.stock})`, true); return }
+  // Busca un producto en una lista por ID y, si no, por nombre
+  const findRef = (list, ref) =>
+    list.find(x => ref.product_id && x.id === ref.product_id) ||
+    list.find(x => x.name === ref.product_name)
+
+  // Expande líneas (carrito o items de venta) a necesidades por producto individual.
+  // Un combo se convierte en sus componentes. Si la línea trae "components"
+  // (snapshot guardado en la venta) se usa ese snapshot y no la definición actual.
+  const expandNeeds = (lines, list) => {
+    const needs = {}
+    const add = (prod, qty, comboName) => {
+      if (!prod) return
+      if (!needs[prod.id]) needs[prod.id] = {prod, qty:0, combos:[]}
+      needs[prod.id].qty += qty
+      if (comboName && !needs[prod.id].combos.includes(comboName)) needs[prod.id].combos.push(comboName)
+    }
+    lines.forEach(l => {
+      const ref   = {product_id: l.product_id || l.id, product_name: l.product_name || l.name}
+      const prod  = findRef(list, ref)
+      const comps = (l.components && l.components.length) ? l.components
+                  : (prod && prod.combo && prod.combo.length) ? prod.combo : null
+      if (comps) comps.forEach(c => add(findRef(list, c), (l.qty||0) * (c.qty||1), ref.product_name))
+      else add(prod, l.qty||0, null)
+    })
+    return needs
+  }
+
+  // ¿Alcanza el stock para estas líneas? Devuelve un mensaje o null.
+  // Los combos SIEMPRE exigen stock de TODOS sus componentes (si manejan inventario).
+  // Los productos sueltos solo se bloquean si está activo "Bloquear venta sin stock".
+  const stockProblem = (lines, list, enforceAll) => {
+    const needs = expandNeeds(lines, list)
+    for (const id in needs) {
+      const {prod, qty, combos} = needs[id]
+      if (prod.stock === null || prod.stock === undefined) continue
+      if (!(enforceAll || combos.length > 0)) continue
+      if (qty > prod.stock) {
+        if (combos.length) return `Sin stock suficiente para el combo: de "${prod.name}" hay ${Math.max(prod.stock,0)} y se necesitan ${qty}`
+        return prod.stock <= 0 ? `"${prod.name}": sin stock` : `"${prod.name}": solo hay ${prod.stock} en stock`
       }
     }
+    return null
+  }
+
+  const addItem = p => {
+    const ex       = cart.find(i => i.id===p.id)
+    const nextCart = ex ? cart.map(i => i.id===p.id ? {...i, qty:i.qty+1} : i) : [...cart, {...p, qty:1}]
+    const problem  = stockProblem(nextCart, activeProds, blockNoStock)
+    if (problem) { toast(problem, true); return }
     setCart(prev => {
-      const ex = prev.find(i => i.id===p.id)
-      return ex ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
+      const e2 = prev.find(i => i.id===p.id)
+      return e2 ? prev.map(i => i.id===p.id ? {...i,qty:i.qty+1} : i) : [...prev,{...p,qty:1}]
     })
     toast(`${p.name} agregado`)
   }
@@ -2121,21 +2477,11 @@ export default function App() {
   }
 
   const setQty = (id,q) => {
-    // Al aumentar cantidad manualmente, respetar bloqueo de stock
-    if (blockNoStock && q > 0) {
-      const inCart = cart.find(i => i.id===id)
-      if (inCart) {
-        if (inCart.combo && inCart.combo.length) {
-          const avail = comboAvail(inCart, activeProds)
-          if (avail !== null && q > avail) {
-            toast(`Solo alcanzan ${avail} combos con el stock actual`, true)
-            return
-          }
-        } else if (inCart.stock !== null && inCart.stock !== undefined && q > inCart.stock) {
-          toast(`Solo hay ${inCart.stock} en stock`, true)
-          return
-        }
-      }
+    const cur = cart.find(i => i.id===id)
+    if (cur && q > cur.qty) {
+      const nextCart = cart.map(i => i.id===id ? {...i, qty:q} : i)
+      const problem  = stockProblem(nextCart, activeProds, blockNoStock)
+      if (problem) { toast(problem, true); return }
     }
     setCart(prev =>
       q<=0 ? prev.filter(i=>i.id!==id) : prev.map(i=>i.id===id ? {...i,qty:q} : i)
@@ -2184,6 +2530,7 @@ export default function App() {
     const img      = p.img || FALLBACK
     const category = p.category || ""
     const stockData = {
+      cost:      p.cost ?? null,
       stock:     p.stock ?? null,
       stock_min: p.stock_min ?? 0,
       unit:      p.unit || "unidad",
@@ -2253,19 +2600,90 @@ export default function App() {
     }).catch(console.warn)
   }
 
+  // ── INGRESO DE MERCADERÍA: suma stock, guarda el costo de compra y deja historial ──
+  const saveEntry = ({lista:l, productId, productName, qty, unitCost, date, supplier, invoice, updateCost}) => {
+    if (!user) return
+    const isMay   = l === "mayorista"
+    const colPath = isMay ? `users/${user.uid}/products_mayorista` : `users/${user.uid}/products`
+    const setter  = isMay ? setMayorProds : setProds
+    const list    = isMay ? mayorProds : prods
+    const prod    = list.find(p => p.id === productId)
+    if (!prod) { toast("Producto no encontrado", true); return }
+
+    const prev  = prod.stock ?? 0          // si no manejaba inventario, arranca desde 0
+    const next  = prev + qty
+    const patch = {stock: next}
+    if (updateCost) patch.cost = unitCost  // costo vigente para las próximas ventas
+
+    // 1) Stock (y costo) del producto
+    setter(arr => arr.map(p => p.id===productId ? {...p, ...patch} : p))
+    if (!String(productId).startsWith("_"))
+      updateDoc(doc(db, colPath, productId), patch).catch(console.warn)
+
+    // 2) Movimiento de stock
+    const note = [supplier && `Prov: ${supplier}`, invoice && `Doc: ${invoice}`].filter(Boolean).join(" · ")
+    addDoc(collection(db, `users/${user.uid}/stock_movements`), {
+      product_id:   productId,
+      product_name: productName,
+      lista:        l,
+      type:         "ingreso",
+      qty:          qty,
+      stock_prev:   prev,
+      stock_next:   next,
+      unit_cost:    unitCost,
+      reason:       "Ingreso de mercadería" + (note ? ` · ${note}` : ""),
+      created_at:   Timestamp.now(),
+    }).catch(console.warn)
+
+    // 3) Historial de ingresos (compras)
+    const entry = {
+      product_id:   productId,
+      product_name: productName,
+      lista:        l,
+      qty:          qty,
+      unit_cost:    unitCost,
+      total_cost:   round2(qty * unitCost),
+      entry_date:   date,
+      supplier:     supplier || "",
+      invoice:      invoice  || "",
+      stock_prev:   prev,
+      stock_next:   next,
+      cost_updated: !!updateCost,
+      created_at:   Timestamp.now(),
+    }
+    const tempId = "_e" + Date.now()
+    setEntries(arr => [{...entry, id:tempId}, ...arr])
+    addDoc(collection(db, `users/${user.uid}/stock_entries`), entry)
+      .then(r => setEntries(arr => {
+        const rest = arr.filter(e => e.id!==tempId && e.id!==r.id)
+        return [{...entry, id:r.id}, ...rest]
+          .sort((a,b) => (b.created_at?.seconds||0) - (a.created_at?.seconds||0))
+      }))
+      .catch(console.warn)
+
+    // Para que el ingreso se vea al instante aunque el rango "Hasta" haya quedado viejo
+    const nowDT = nowLocalDT()
+    if (nowDT > movTo) setMovTo(nowDT)
+
+    setEntryModal(false)
+    toast(`Ingreso registrado: +${qty} ${productName}`)
+  }
+
+  // ── STOCK: descuenta (sign=-1) o devuelve (sign=+1) según items vendidos ──
+  // Agrupa por producto: si un mismo producto aparece varias veces en la venta
+  // (suelto y dentro de combos) se descuenta UNA sola vez con el total.
   const applyStockChange = (items, listaVenta, sign) => {
     if (!user) return
-    // Solo la lista minorista/mayorista correspondiente maneja su stock
     const colPath = listaVenta === "mayorista"
       ? `users/${user.uid}/products_mayorista`
       : `users/${user.uid}/products`
     const setter  = listaVenta === "mayorista" ? setMayorProds : setProds
     const current = listaVenta === "mayorista" ? mayorProds : prods
 
-    // Ajusta el stock de un producto individual y registra el movimiento
-    const adjustOne = (prod, qty, reasonExtra) => {
-      if (!prod || prod.stock === null || prod.stock === undefined) return
-      const prev = prod.stock || 0
+    const needs = expandNeeds(items, current)
+    Object.values(needs).forEach(({prod, qty, combos}) => {
+      if (prod.stock === null || prod.stock === undefined) return
+      const prev     = prod.stock || 0
       const newStock = prev + sign * qty
       setter(list => list.map(p => p.id===prod.id ? {...p, stock:newStock} : p))
       if (!String(prod.id).startsWith("_"))
@@ -2278,30 +2696,54 @@ export default function App() {
         qty:          qty,
         stock_prev:   prev,
         stock_next:   newStock,
-        reason:       (sign < 0 ? "Venta" : "Anulación de venta") + (reasonExtra||""),
+        reason:       (sign < 0 ? "Venta" : "Anulación de venta") + (combos.length ? ` (combo: ${combos.join(", ")})` : ""),
         created_at:   Timestamp.now(),
       }).catch(console.warn)
-    }
+    })
+  }
 
-    items.forEach(it => {
-      // Buscar por ID primero (ventas nuevas), por nombre como fallback (ventas viejas)
-      const prod = current.find(p => it.product_id && p.id === it.product_id)
-                || current.find(p => p.name === it.product_name)
-      if (!prod) return
+  // ── COSTOS: "foto" del costo al momento de la venta ──────────────────────
+  // Cada item queda con su costo unitario, costo de línea y ganancia de línea.
+  // Un combo guarda además cada componente con su cantidad y costo individual.
+  // Como queda grabado en la venta, cambiar el costo del producto después
+  // NO altera las ventas anteriores.
+  const enrichWithCost = (items, listaVenta) => {
+    const list = listaVenta === "mayorista" ? mayorProds : prods
+    let costTotal = 0, incomplete = false
+    const out = items.map(it => {
+      const prod  = findRef(list, it)
+      const qty   = it.qty || 0
+      const price = it.product_price || 0
 
-      // ── COMBO: descontar componentes en lugar del combo ──
-      if (prod.combo && prod.combo.length) {
-        prod.combo.forEach(cmp => {
-          const compProd = current.find(x => x.id === cmp.product_id)
-                        || current.find(x => x.name === cmp.product_name)
-          if (compProd) adjustOne(compProd, it.qty * (cmp.qty||1), ` (combo: ${prod.name})`)
+      if (prod && prod.combo && prod.combo.length) {
+        let miss = false
+        const components = prod.combo.map(c => {
+          const cp    = findRef(list, c)
+          const known = !!cp && typeof cp.cost === "number"
+          if (!known) miss = true
+          return {
+            product_id:   (cp && cp.id)   || c.product_id   || "",
+            product_name: (cp && cp.name) || c.product_name || "",
+            qty:          c.qty || 1,
+            unit_cost:    known ? cp.cost : 0,
+            cost_missing: !known,
+          }
         })
-        return
+        const unit = round2(components.reduce((s,c) => s + c.unit_cost * c.qty, 0))
+        if (miss) incomplete = true
+        costTotal += unit * qty
+        return {...it, is_combo:true, components, unit_cost:unit, cost_missing:miss,
+                line_cost:round2(unit*qty), line_profit:round2((price-unit)*qty)}
       }
 
-      if (prod.stock === null || prod.stock === undefined) return
-      adjustOne(prod, it.qty)
+      const known = !!prod && typeof prod.cost === "number"
+      if (!known) incomplete = true
+      const unit = known ? prod.cost : 0
+      costTotal += unit * qty
+      return {...it, unit_cost:unit, cost_missing:!known,
+              line_cost:round2(unit*qty), line_profit:round2((price-unit)*qty)}
     })
+    return {items:out, cost_total:round2(costTotal), cost_incomplete:incomplete}
   }
 
   const delSale = id => {
@@ -2319,17 +2761,26 @@ export default function App() {
   /* pay — optimistic */
   const paySale = info => {
     if (!user || !salesCol) return
+    // Verificación final: un combo no se vende si falta stock de CUALQUIER componente
+    const problem = stockProblem(cart, activeProds, blockNoStock)
+    if (problem) { toast(problem, true); return }
     const td = today()
+    const costed = enrichWithCost(
+      cart.map(i => ({product_id:i.id, product_name:i.name, product_price:i.price, qty:i.qty})),
+      lista)
     const sale = {
       id:uid(), date:td, total:cartFinal,
       discount: discountAmt,
       lista: lista,
       method:info.mode, cash_paid:info.cashPaid||0,
       mp_paid:info.mpPaid||0, change_amount:info.change||0,
-      items:cart.map(i => ({product_id:i.id, product_name:i.name, product_price:i.price, qty:i.qty})),
+      items: costed.items,
+      cost_total: costed.cost_total,
+      cost_incomplete: costed.cost_incomplete,
+      profit: round2(cartFinal - costed.cost_total),
       created_at:{seconds:Date.now()/1000, toDate:()=>new Date()},
     }
-    // Descontar stock de los productos vendidos
+    // Descontar stock (los combos descuentan cada componente)
     applyStockChange(sale.items, lista, -1)
     // Optimistic: si la venta es de hoy, extendemos el rango hasta ahora
     // para que aparezca al instante en el historial
@@ -2362,20 +2813,30 @@ export default function App() {
   }
   const confirmOrder = async (order, payInfo) => {
     if (!user || !salesCol) return
+    const listaVenta = order.lista || "minorista"
+    const listForOrder = listaVenta === "mayorista" ? mayorProds : prods
+    // Un combo no se cobra si falta stock de cualquiera de sus componentes
+    const problem = stockProblem(order.items||[], listForOrder, blockNoStock)
+    if (problem) { toast(problem, true); return }
     const td = today()
+    // El costo se toma al momento de cobrar el pedido
+    const costed = enrichWithCost(order.items||[], listaVenta)
     // Create sale from order
     const sale = {
       id:"_o"+order.id,
       date:td, total:order.total,
-      lista: order.lista||"minorista",
+      lista: listaVenta,
       method:payInfo.mode, cash_paid:payInfo.cashPaid||0,
       mp_paid:payInfo.mpPaid||0, change_amount:payInfo.change||0,
-      items:order.items,
+      items: costed.items,
+      cost_total: costed.cost_total,
+      cost_incomplete: costed.cost_incomplete,
+      profit: round2(order.total - costed.cost_total),
       customer_name:order.customer_name,
       created_at:{seconds:Date.now()/1000,toDate:()=>new Date()},
     }
     // Descontar stock del pedido cobrado
-    applyStockChange(order.items||[], order.lista||"minorista", -1)
+    applyStockChange(sale.items, listaVenta, -1)
     // Optimistic — extendemos el rango si hace falta para verlo al instante
     const nowDT = nowLocalDT()
     if (histFrom <= nowDT && nowDT <= histTo) {
@@ -2758,11 +3219,11 @@ export default function App() {
             {!mobile && (
               <div style={{position:"absolute", top:7, right:7,
                 display:"flex", gap:4, zIndex:5}}>
-                <button onClick={e=>{e.stopPropagation();setStockModal(p)}}
+                {!(p.combo && p.combo.length) && (<button onClick={e=>{e.stopPropagation();setStockModal(p)}}
                   style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
                     borderRadius:7, color:C.ok, width:28, height:28,
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:13}}>📦</button>
+                    fontSize:13}}>📦</button>)}
                 <button onClick={e=>{e.stopPropagation();setProdModal({p})}}
                   style={{background:"rgba(6,4,17,.8)", border:`1px solid ${C.br}`,
                     borderRadius:7, color:C.v, width:28, height:28,
@@ -2784,11 +3245,11 @@ export default function App() {
                     borderRadius:5, color:C.v, width:18, height:18,
                     display:"flex", alignItems:"center", justifyContent:"center",
                     fontSize:9, lineHeight:1}}>✏️</button>
-                <button onClick={e=>{e.stopPropagation();setStockModal(p)}}
+                {!(p.combo && p.combo.length) && (<button onClick={e=>{e.stopPropagation();setStockModal(p)}}
                   style={{background:"rgba(6,4,17,.65)", border:"none",
                     borderRadius:5, color:C.ok, width:18, height:18,
                     display:"flex", alignItems:"center", justifyContent:"center",
-                    fontSize:9, lineHeight:1}}>📦</button>
+                    fontSize:9, lineHeight:1}}>📦</button>)}
               </div>
             )}
 
@@ -3640,10 +4101,10 @@ export default function App() {
                       </div>
                       <p style={{fontSize:13, color:C.tx2, lineHeight:1.5,
                         fontFamily:"'DM Sans',sans-serif",
-                        marginBottom:(s.change_amount>0||s.method==="mixto"||(s.discount||0)>0)?6:0}}>
+                        marginBottom:(s.change_amount>0||s.method==="mixto"||(s.discount||0)>0||s.profit!==undefined)?6:0}}>
                         {(s.items||[]).map(it=>`${it.product_name} ×${it.qty}`).join("  ·  ")}
                       </p>
-                      {(s.method==="mixto" || s.change_amount>0 || (s.discount||0)>0) && (
+                      {(s.method==="mixto" || s.change_amount>0 || (s.discount||0)>0 || s.profit!==undefined) && (
                         <div style={{display:"flex", gap:7, flexWrap:"wrap", marginTop:5}}>
                           {s.method==="mixto" && <>
                             <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
@@ -3665,6 +4126,15 @@ export default function App() {
                               borderRadius:20, fontWeight:600,
                               border:`1px solid ${C.er}33`}}>
                               🏷️ −{$(s.discount)}
+                            </span>
+                          )}
+                          {s.profit !== undefined && (
+                            <span style={{fontFamily:"'DM Mono',monospace", fontSize:12,
+                              color: s.profit>=0 ? C.ok : C.er,
+                              background: s.profit>=0 ? C.okbg : C.erbg,
+                              padding:"3px 10px", borderRadius:20, fontWeight:600,
+                              border:`1px solid ${(s.profit>=0 ? C.ok : C.er)}33`}}>
+                              📈 Ganancia {$(s.profit)}{s.cost_incomplete ? " ⚠️" : ""}
                             </span>
                           )}
                           {s.change_amount > 0 && (
@@ -4125,17 +4595,49 @@ export default function App() {
             devolucion: {l:"Devolución", i:"↩",  c:C.v},
           }
           const filtered = movType==="all" ? movements : movements.filter(m => m.type===movType)
+          const entTotal = entries.reduce((s,e) => s + (e.total_cost||0), 0)
+          const entUnits = entries.reduce((s,e) => s + (e.qty||0), 0)
+          const fmtD = s => { if (!s) return ""; const [y,m,d] = s.split("-"); return `${d}/${m}/${y}` }
 
           return (
             <div style={{maxWidth:880, margin:"0 auto", padding:"24px 16px"}}>
-              <div style={{marginBottom:20}}>
-                <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
-                  fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
-                  Historial de Inventario
-                </h2>
-                <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
-                  {filtered.length} movimiento{filtered.length!==1?"s":""} en el rango
-                </p>
+              <div style={{marginBottom:16, display:"flex", alignItems:"flex-start",
+                justifyContent:"space-between", gap:12, flexWrap:"wrap"}}>
+                <div>
+                  <h2 style={{fontFamily:"'Space Grotesk',sans-serif",
+                    fontWeight:700, fontSize:22, color:C.tx, margin:"0 0 4px"}}>
+                    Inventario
+                  </h2>
+                  <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx3}}>
+                    {invView==="ing"
+                      ? `${entries.length} ingreso${entries.length!==1?"s":""} en el rango`
+                      : `${filtered.length} movimiento${filtered.length!==1?"s":""} en el rango`}
+                  </p>
+                </div>
+                <button onClick={()=>setEntryModal(true)}
+                  style={{background:`linear-gradient(135deg,${C.v},${C.vm})`,
+                    border:"none", borderRadius:12, color:"#0f0a1e",
+                    padding:"11px 16px", fontFamily:"'Space Grotesk',sans-serif",
+                    fontWeight:700, fontSize:13, whiteSpace:"nowrap",
+                    boxShadow:`0 0 16px ${C.v}33`}}>
+                  📥 Ingreso de mercadería
+                </button>
+              </div>
+
+              {/* sub-pestañas */}
+              <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",
+                gap:6, background:C.card, border:`1px solid ${C.br}`,
+                borderRadius:12, padding:4, marginBottom:16}}>
+                {[["mov","📋 Movimientos"],["ing","📥 Ingresos"]].map(([k,l]) => (
+                  <button key={k} onClick={()=>setInvView(k)}
+                    style={{padding:"10px 4px", borderRadius:9, border:"none",
+                      background: invView===k ? C.vbg : "transparent",
+                      color:      invView===k ? C.v : C.tx3,
+                      boxShadow:  invView===k ? `inset 0 0 0 1px ${C.v}55` : "none",
+                      fontFamily:"'Space Grotesk',sans-serif", fontWeight:700, fontSize:13}}>
+                    {l}
+                  </button>
+                ))}
               </div>
 
               {/* filtro rango */}
@@ -4183,7 +4685,8 @@ export default function App() {
                 </div>
               </div>
 
-              {/* filtro tipo */}
+              {/* filtro tipo — solo en Movimientos */}
+              {invView==="mov" && (
               <div style={{display:"flex", gap:6, marginBottom:20, flexWrap:"wrap"}}>
                 {[["all","Todos"],["ingreso","Ingresos"],["salida","Salidas"],
                   ["ajuste","Ajustes"],["venta","Ventas"],["devolucion","Devoluciones"]].map(([k,l]) => (
@@ -4197,8 +4700,102 @@ export default function App() {
                   </button>
                 ))}
               </div>
+              )}
 
-              {loadMov ? (
+              {invView==="ing" ? (
+                loadEnt ? (
+                  <div style={{display:"flex", justifyContent:"center", padding:60}}><Spin s={28}/></div>
+                ) : entries.length===0 ? (
+                  <div style={{textAlign:"center", padding:"50px 0", color:C.tx3}}>
+                    <div style={{width:68, height:68, background:C.vbg,
+                      border:`1px solid ${C.br}`, borderRadius:20,
+                      display:"flex", alignItems:"center", justifyContent:"center",
+                      fontSize:30, margin:"0 auto 14px"}}>📥</div>
+                    <h3 style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:15,
+                      fontWeight:600, color:C.tx2, marginBottom:6}}>Sin ingresos en este rango</h3>
+                    <p style={{fontSize:13, color:C.tx3}}>
+                      Tocá "Ingreso de mercadería" para registrar una compra
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{display:"grid", gridTemplateColumns:"minmax(0,1fr) minmax(0,1fr)",
+                      gap:10, marginBottom:14}}>
+                      {[
+                        {l:"Total invertido", v:$(entTotal), c:C.v},
+                        {l:"Unidades",        v:entUnits,    c:C.ok},
+                      ].map(({l,v,c}) => (
+                        <div key={l} style={{background:C.card, border:`1px solid ${C.br}`,
+                          borderRadius:14, padding:"14px 16px", minWidth:0}}>
+                          <div style={{fontFamily:"'Space Grotesk',sans-serif", fontSize:10,
+                            fontWeight:700, color:C.tx3, letterSpacing:1,
+                            textTransform:"uppercase", marginBottom:8}}>{l}</div>
+                          <div style={{fontFamily:"'Space Grotesk',monospace", fontWeight:700,
+                            fontSize:22, color:c, letterSpacing:-1}}>{v}</div>
+                        </div>
+                      ))}
+                    </div>
+                    <div style={{display:"flex", flexDirection:"column", gap:8}}>
+                      {entries.map(e => {
+                        const ts = (e.created_at?.toDate
+                          ? e.created_at.toDate()
+                          : new Date((e.created_at?.seconds||0)*1000))
+                          .toLocaleString("es-AR",{day:"2-digit",month:"2-digit",hour:"2-digit",minute:"2-digit"})
+                        return (
+                          <div key={e.id}
+                            style={{background:C.card, border:`1px solid ${C.br}`,
+                              borderRadius:12, padding:"14px 16px"}}>
+                            <div style={{display:"flex", justifyContent:"space-between",
+                              alignItems:"flex-start", gap:10}}>
+                              <div style={{minWidth:0}}>
+                                <p style={{fontFamily:"'Space Grotesk',sans-serif",
+                                  fontSize:14, fontWeight:600, color:C.tx, margin:"0 0 3px"}}>
+                                  {e.product_name}
+                                  {e.lista==="mayorista" && (
+                                    <span style={{fontSize:10, color:C.am, marginLeft:6,
+                                      fontWeight:700}}>📦 MAY</span>
+                                  )}
+                                </p>
+                                <p style={{fontFamily:"'DM Mono',monospace", fontSize:12, color:C.tx2, margin:0}}>
+                                  {e.qty} × {$(e.unit_cost)}
+                                </p>
+                              </div>
+                              <div style={{textAlign:"right", flexShrink:0}}>
+                                <div style={{fontFamily:"'Space Grotesk',monospace", fontSize:16,
+                                  fontWeight:700, color:C.v, letterSpacing:-.5}}>{$(e.total_cost)}</div>
+                                <div style={{fontFamily:"'DM Mono',monospace", fontSize:11, color:C.tx3}}>
+                                  {e.stock_prev} → {e.stock_next}
+                                </div>
+                              </div>
+                            </div>
+                            <div style={{display:"flex", gap:6, flexWrap:"wrap", marginTop:8}}>
+                              <span style={{fontSize:11, color:C.tx2, background:C.card2,
+                                padding:"2px 9px", borderRadius:20, border:`1px solid ${C.br}`}}>
+                                📅 {fmtD(e.entry_date)}
+                              </span>
+                              {e.supplier && (
+                                <span style={{fontSize:11, color:C.tx2, background:C.card2,
+                                  padding:"2px 9px", borderRadius:20, border:`1px solid ${C.br}`}}>
+                                  🏭 {e.supplier}
+                                </span>
+                              )}
+                              {e.invoice && (
+                                <span style={{fontSize:11, color:C.tx2, background:C.card2,
+                                  padding:"2px 9px", borderRadius:20, border:`1px solid ${C.br}`}}>
+                                  🧾 {e.invoice}
+                                </span>
+                              )}
+                              <span style={{fontSize:11, color:C.tx3, padding:"2px 4px"}}>
+                                registrado {ts}
+                              </span>
+                            </div>
+                          </div>
+                        )
+                      })}
+                    </div>
+                  </>
+                )
+              ) : loadMov ? (
                 <div style={{display:"flex", justifyContent:"center", padding:60}}><Spin s={28}/></div>
               ) : filtered.length===0 ? (
                 <div style={{textAlign:"center", padding:"50px 0", color:C.tx3}}>
@@ -4240,7 +4837,9 @@ export default function App() {
                               </p>
                               <p style={{fontSize:12, color:C.tx3, margin:0}}>
                                 <span style={{color:cfg.c, fontWeight:600}}>{cfg.l}</span>
-                                {" · "}{m.reason}{" · "}{ts}
+                                {" · "}{m.reason}
+                                {(m.unit_cost !== undefined && m.unit_cost !== null) ? ` · costo ${$(m.unit_cost)}` : ""}
+                                {" · "}{ts}
                               </p>
                             </div>
                           </div>
@@ -4270,6 +4869,10 @@ export default function App() {
         onClose={()=>setOrderToPay(null)}
         onPay={payInfo=>confirmOrder(orderToPay,payInfo)}/>}
       {stockModal && <StockModal p={stockModal} onClose={()=>setStockModal(null)} onSave={saveStock}/>}
+      {entryModal && <StockEntryModal
+        lists={{minorista:prods, mayorista:mayorProds}}
+        defaultLista={lista}
+        onClose={()=>setEntryModal(false)} onSave={saveEntry}/>}
       {scanOpen && <ScannerModal onClose={()=>setScanOpen(false)} onScan={handleScan}/>}
       {prodModal && <ProductModal p={prodModal.p}
         categories={[...new Set(activeProds.map(p=>p.category).filter(Boolean))].sort()}
